@@ -1,0 +1,7 @@
+name: catchy-toilet
+
+# Keep the service definitions and the existing development credentials in place.
+# Requires Docker Compose 2.20.3 or later.
+include:
+  - path: database/docker-compose.yml
+    env_file: backend/.env
