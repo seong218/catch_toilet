@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:catchy_toilet/models/recommendation.dart';
-import 'package:catchy_toilet/models/restroom.dart';
-import 'package:catchy_toilet/models/stall_update.dart';
-import 'package:catchy_toilet/repositories/mock_restroom_repository.dart';
-import 'package:catchy_toilet/repositories/restroom_repository.dart';
-import 'package:catchy_toilet/services/location_service.dart';
-import 'package:catchy_toilet/state/app_controller.dart';
+import 'package:catch_toilet/models/recommendation.dart';
+import 'package:catch_toilet/models/restroom.dart';
+import 'package:catch_toilet/models/stall_update.dart';
+import 'package:catch_toilet/repositories/mock_restroom_repository.dart';
+import 'package:catch_toilet/repositories/restroom_repository.dart';
+import 'package:catch_toilet/services/location_service.dart';
+import 'package:catch_toilet/state/app_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class ControlledRepository extends MockRestroomRepository {

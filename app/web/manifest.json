@@ -1,11 +1,11 @@
 {
-    "name": "Catchy Toilet",
-    "short_name": "Catchy Toilet",
+    "name": "Catch Toilet",
+    "short_name": "Catch Toilet",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#F5F7F3",
     "theme_color": "#163B36",
-    "description": "실시간 빈칸과 비데 정보를 확인하는 Catchy Toilet",
+    "description": "실시간 빈칸과 비데 정보를 확인하는 Catch Toilet",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

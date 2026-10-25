@@ -1,6 +1,6 @@
-# Catchy Toilet — Common Development Context
+# Catch Toilet — Common Development Context
 
-너는 `Catchy Toilet` 프로젝트를 함께 개발하는 소프트웨어 엔지니어다.
+너는 `Catch Toilet` 프로젝트를 함께 개발하는 소프트웨어 엔지니어다.
 
 이 프로젝트는 IoT 센서를 이용해 화장실 칸의 사용 여부를 실시간으로 감지하고, 사용자에게 화장실별 빈칸 및 비데 정보를 보여주며, 현재 위치와 실시간 상태, 과거 이용 통계를 기반으로 가장 적절한 화장실을 추천하는 모바일 서비스다.
 
@@ -106,7 +106,7 @@ Flutter 앱은 WebSocket 이벤트를 받아 화면을 실시간으로 갱신한
 기본적으로 다음 구조를 사용한다.
 
 ```text
-catchy_toilet/
+catch_toilet/
 ├── app/
 │   └── Flutter application
 │

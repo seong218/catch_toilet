@@ -1,16 +1,16 @@
 import 'dart:async';
 
-import 'package:catchy_toilet/app.dart';
-import 'package:catchy_toilet/models/restroom.dart';
-import 'package:catchy_toilet/models/recommendation.dart';
-import 'package:catchy_toilet/models/stall.dart';
-import 'package:catchy_toilet/models/stall_update.dart';
-import 'package:catchy_toilet/repositories/mock_restroom_repository.dart';
-import 'package:catchy_toilet/repositories/restroom_repository.dart';
-import 'package:catchy_toilet/services/location_service.dart';
-import 'package:catchy_toilet/screens/home_screen.dart';
-import 'package:catchy_toilet/widgets/restroom_floor_plan.dart';
-import 'package:catchy_toilet/widgets/restroom_list_card.dart';
+import 'package:catch_toilet/app.dart';
+import 'package:catch_toilet/models/restroom.dart';
+import 'package:catch_toilet/models/recommendation.dart';
+import 'package:catch_toilet/models/stall.dart';
+import 'package:catch_toilet/models/stall_update.dart';
+import 'package:catch_toilet/repositories/mock_restroom_repository.dart';
+import 'package:catch_toilet/repositories/restroom_repository.dart';
+import 'package:catch_toilet/services/location_service.dart';
+import 'package:catch_toilet/screens/home_screen.dart';
+import 'package:catch_toilet/widgets/restroom_floor_plan.dart';
+import 'package:catch_toilet/widgets/restroom_list_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -18,7 +18,7 @@ void main() {
   Future<void> openList(WidgetTester tester, _ListRepository repository) async {
     await tester.binding.setSurfaceSize(const Size(402, 874));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(CatchyToiletApp(repository: repository));
+    await tester.pumpWidget(CatchToiletApp(repository: repository));
     await tester.tap(find.text('시작하기'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(NavigationDestination, '목록'));

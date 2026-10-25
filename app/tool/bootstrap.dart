@@ -7,7 +7,7 @@ Future<void> main() async {
   final app = File.fromUri(Platform.script).absolute.parent.parent;
   if (!File('${app.path}/pubspec.yaml').existsSync()) {
     stderr.writeln(
-      'Run this script from the Catchy Toilet app/tool directory.',
+      'Run this script from the Catch Toilet app/tool directory.',
     );
     exitCode = 1;
     return;
@@ -29,8 +29,8 @@ Future<void> main() async {
         '--empty',
         '--no-pub',
         '--platforms=${missing.join(',')}',
-        '--project-name=catchy_toilet',
-        '--org=dev.catchytoilet',
+        '--project-name=catch_toilet',
+        '--org=dev.catchtoilet',
         seed.path,
       ], app.path);
       if (generated != 0) {

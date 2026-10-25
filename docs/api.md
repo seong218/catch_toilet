@@ -1,4 +1,4 @@
-# Catchy Toilet API Contract — MVP
+# Catch Toilet API Contract — MVP
 
 ## PC 상태 시뮬레이션 (2026-10-25)
 

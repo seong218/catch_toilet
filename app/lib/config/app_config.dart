@@ -1,5 +1,5 @@
 class AppConfig {
-  static const appName = 'Catchy Toilet';
+  static const appName = 'Catch Toilet';
   static const appVersion = '1.0.0';
 
   static const useMock = bool.fromEnvironment('USE_MOCK', defaultValue: false);

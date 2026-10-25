@@ -17,15 +17,15 @@ import 'state/app_controller.dart';
 import 'widgets/location_editor.dart';
 import 'widgets/recommendation_tab_icon.dart';
 
-class CatchyToiletApp extends StatefulWidget {
-  const CatchyToiletApp({super.key, required this.repository});
+class CatchToiletApp extends StatefulWidget {
+  const CatchToiletApp({super.key, required this.repository});
   final RestroomRepository repository;
 
   @override
-  State<CatchyToiletApp> createState() => _CatchyToiletAppState();
+  State<CatchToiletApp> createState() => _CatchToiletAppState();
 }
 
-class _CatchyToiletAppState extends State<CatchyToiletApp>
+class _CatchToiletAppState extends State<CatchToiletApp>
     with WidgetsBindingObserver {
   late final AppController _controller = AppController(widget.repository);
   bool _hasStarted = false;
@@ -210,7 +210,7 @@ class _AppShellState extends State<_AppShell> {
                           SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'Catchy Toilet',
+                              'Catch Toilet',
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontWeight: FontWeight.w700),
                             ),

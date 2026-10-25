@@ -1,15 +1,15 @@
-import 'package:catchy_toilet/app.dart';
-import 'package:catchy_toilet/data/health_articles.dart';
-import 'package:catchy_toilet/repositories/mock_restroom_repository.dart';
-import 'package:catchy_toilet/screens/info_screen.dart';
-import 'package:catchy_toilet/widgets/health_article_body.dart';
-import 'package:catchy_toilet/widgets/health_article_card.dart';
+import 'package:catch_toilet/app.dart';
+import 'package:catch_toilet/data/health_articles.dart';
+import 'package:catch_toilet/repositories/mock_restroom_repository.dart';
+import 'package:catch_toilet/screens/info_screen.dart';
+import 'package:catch_toilet/widgets/health_article_body.dart';
+import 'package:catch_toilet/widgets/health_article_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Future<void> openInfo(WidgetTester tester) async {
   await tester.pumpWidget(
-    CatchyToiletApp(repository: MockRestroomRepository()),
+    CatchToiletApp(repository: MockRestroomRepository()),
   );
   await tester.pumpAndSettle();
   await tester.ensureVisible(find.text('시작하기'));

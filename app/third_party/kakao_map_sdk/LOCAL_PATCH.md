@@ -1,4 +1,4 @@
-# Catchy Toilet iOS teardown fix
+# Catch Toilet iOS teardown fix
 
 Base: `kakao_map_sdk` **1.3.1**, from its published pub.dev archive.
 Archive SHA-256: `01ce4dec9b03d718d5bfcc95f246ea1816af431cdf4fc6172cf49e08981e0987`.

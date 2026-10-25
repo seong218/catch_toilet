@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine.dispose()
 
 
-app = FastAPI(title="Catchy Toilet API", lifespan=lifespan)
+app = FastAPI(title="Catch Toilet API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_allowed_origins,

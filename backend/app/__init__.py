@@ -1,1 +1,1 @@
-"""Catchy Toilet backend."""
+"""Catch Toilet backend."""
