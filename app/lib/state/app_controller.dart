@@ -19,6 +19,8 @@ class AppController extends ChangeNotifier {
   final Duration eventDelay;
   List<Restroom> restrooms = const [];
   Recommendation? recommendation;
+  bool recommendationBidetRequired = false;
+  bool recommendationWasFull = false;
   bool bidetRequired = false;
   bool accessibleOnly = false;
   String gender = 'male';
@@ -55,6 +57,10 @@ class AppController extends ChangeNotifier {
 
   UserLocation get location => locationService.current;
   bool get hasSelectedLocation => locationService.hasSelectedLocation;
+  bool get hasRecommendationResponse =>
+      recommendation != null ||
+      recommendationError != null ||
+      recommendationEmpty != null;
   bool get _canRecommend =>
       hasSelectedLocation &&
       !recommendationLocating &&
@@ -239,9 +245,11 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setBidetRequired(bool value) async {
-    if (value == bidetRequired) return;
+    if (_disposed || value == bidetRequired) return;
     bidetRequired = value;
-    recommendation = null;
+    // Reflect the switch even before GPS is available. Keep the last response
+    // visible while Backend evaluates the changed preference.
+    _notify();
     await refreshRecommendation();
   }
 
@@ -263,6 +271,8 @@ class AppController extends ChangeNotifier {
     loadingDetails.clear();
     restrooms = const [];
     recommendation = null;
+    recommendationError = null;
+    recommendationEmpty = null;
     await refresh();
   }
 
@@ -302,21 +312,29 @@ class AppController extends ChangeNotifier {
     if (_disposed || !_canRecommend) return;
     _recommendationTimer?.cancel();
     final request = ++_recommendationRequest;
+    final requestedBidet = bidetRequired;
     recommendationLoading = true;
-    recommendationError = null;
-    recommendationEmpty = null;
+    // Background refreshes replace the last response only when they finish.
     _notify();
     try {
       final result = await repository.getRecommendation(
         location,
-        bidetRequired: bidetRequired,
+        bidetRequired: requestedBidet,
         gender: gender,
       );
       if (_disposed || request != _recommendationRequest) return;
       recommendation = result;
+      recommendationBidetRequired = requestedBidet;
+      recommendationWasFull =
+          result.restroom.availableStalls == 0 &&
+          result.restroom.unknownStalls == 0;
+      recommendationError = null;
+      recommendationEmpty = null;
     } on RepositoryException catch (error) {
       if (_disposed || request != _recommendationRequest) return;
       recommendation = null;
+      recommendationError = null;
+      recommendationEmpty = null;
       if (error.isNotFound) {
         recommendationEmpty = switch (error.detail) {
           'Live availability unavailable' =>
@@ -331,6 +349,7 @@ class AppController extends ChangeNotifier {
     } catch (error) {
       if (_disposed || request != _recommendationRequest) return;
       recommendation = null;
+      recommendationEmpty = null;
       recommendationError = messageFor(error);
     } finally {
       if (!_disposed && request == _recommendationRequest) {
@@ -462,11 +481,8 @@ class AppController extends ChangeNotifier {
       recommendation = recommendation!.withRestroom(
         recommendation!.restroom.apply(event),
       );
-      // Only Backend may choose an all-full fallback.
-      if (event.availableStalls == 0 ||
-          (bidetRequired && event.availableBidetStalls == 0)) {
-        recommendation = null;
-      }
+      // Keep live counts separate from the last server response's explanation.
+      // Only Backend can confirm an all-full recommendation.
     }
     final updatedDetail = details[event.restroomId];
     final inconsistent =

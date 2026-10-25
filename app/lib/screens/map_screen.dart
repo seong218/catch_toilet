@@ -107,9 +107,7 @@ class _MapScreenState extends State<MapScreen> {
     final results = _results;
     final notice = controller.listError != null
         ? '화장실 정보를 불러오지 못했어요'
-        : controller.loading
-        ? '화장실 정보를 확인하고 있어요'
-        : controller.restrooms.isEmpty
+        : !controller.loading && controller.restrooms.isEmpty
         ? '아직 등록된 화장실이 없어요'
         : null;
     return Stack(
