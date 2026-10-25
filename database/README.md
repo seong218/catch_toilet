@@ -90,10 +90,11 @@ ORM은 timezone 없는 datetime을 거부한다. 직접 SQL을 사용할 때도 
   명시적인 추적 시작 이후 매 분 경계에 수집하며, 분 시작으로 정규화한 시각과 unique 제약으로 같은 분의 중복을 막는다.
   여러 수집기가 동시에 실행되어도 화장실당 한 표본만 저장한다. DB 오류는 롤백 후 다음 분에 재시도한다.
 - 활성 화장실의 모든 칸에 확인된 상태와 최근 활성 센서 보고가 있어야 한다. 하나라도 미확인·오래된 상태이면 건너뛴다.
-  칸 상태와 일치하는 마지막 보고, 양수 `last_sequence`, 최근 `STAT_SENSOR_MAX_AGE_SECONDS`(기본 300초) 이내의
+  칸 상태와 일치하는 마지막 보고, 최근 `STAT_SENSOR_MAX_AGE_SECONDS`(기본 300초) 이내의
   `Sensor.last_seen_at`을 확인한다. 센서 없는 칸과 미래 시각의 보고도 유효 관측으로 보지 않는다.
-- 새 순번의 Sensor API 보고는 상태 변경 여부와 무관하게 `last_seen_at`을 갱신한다. 같은 순번의 재시도는 갱신하지 않는다.
-  IoT는 상태가 유지되어도 약 60초마다 새 순번으로 보고해야 한다. `active`와 `Stall.updated_at`을 heartbeat로 사용하지 않는다.
+- 정상 처리된 Sensor API 보고는 상태 변경 여부와 무관하게 `last_seen_at`을 갱신한다. 같은 상태의 재시도도 포함한다.
+  IoT는 상태가 유지되어도 약 60초마다 현재 상태를 보고해야 한다. `active`와 `Stall.updated_at`을 heartbeat로 사용하지 않는다.
+  `last_sequence` 컬럼과 기존 값은 남겨두지만 API 처리·통계 수집에서 사용하거나 갱신하지 않는다. 이번 변경에는 migration이 없다.
 - 시뮬레이션 API의 메모리 표시 상태는 수집에 반영하지 않는다. 시설 seed나 migration도 통계를 만들지 않는다.
   과거 수신 시각을 추정하지 않으므로 `last_seen_at`은 최초 실제 보고 전까지 null이다.
 - `captured_at AT TIME ZONE 'Asia/Seoul'`로 현지 요일·시간대를 정한다. 예를 들어 UTC 일요일 15:30은
@@ -187,4 +188,4 @@ Alembic만 개별 실행했다면 `python -m app.provision_runtime_role`도 관�
 초기 상태 설정은 실제 센서 상태 변경 이력이 아니므로 `SensorEvent`는 생성하지 않는다.
 
 API 컨테이너는 `APP_DB_USER`의 제한된 권한으로 실행한다. 관리자 자격 증명은 API에 전달하지 않는다.
-센서 순번·기본 90일 이벤트 보관 정책과 실행 계정 권한은 [보안 안내](../backend/SECURITY.md)를 참고한다.
+센서 인증·기본 90일 이벤트 보관 정책과 실행 계정 권한은 [보안 안내](../backend/SECURITY.md)를 참고한다.

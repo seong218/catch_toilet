@@ -9,6 +9,7 @@ import 'package:catch_toilet/repositories/restroom_repository.dart';
 import 'package:catch_toilet/screens/recommendation_screen.dart';
 import 'package:catch_toilet/services/location_service.dart';
 import 'package:catch_toilet/state/app_controller.dart';
+import 'package:catch_toilet/widgets/recommendation_result.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -49,6 +50,33 @@ void main() {
     return controller;
   }
 
+  testWidgets('bidet switch stays selected before the first GPS request', (
+    tester,
+  ) async {
+    final repository = _RecommendationRepository();
+    var gpsReads = 0;
+    final controller = await openScreen(
+      tester,
+      repository,
+      locationService: LocationService(
+        gpsReader: (_) async {
+          gpsReads++;
+          return _gps;
+        },
+      ),
+    );
+    for (final selected in [true, false, true]) {
+      await tester.tap(_bidetToggle);
+      await tester.pumpAndSettle();
+      expect(controller.bidetRequired, selected);
+      expect(tester.widget<SwitchListTile>(_bidetToggle).value, selected);
+      expect(find.text('추천 받기'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    }
+    expect(gpsReads, 0);
+    expect(repository.requests, isEmpty);
+  });
+
   testWidgets(
     'gender, bidet and location reach the server; detail uses returned ID',
     (tester) async {
@@ -60,7 +88,8 @@ void main() {
         onDetail: (id) => opened = id,
       );
       expect(find.text('지금 추천하는 화장실'), findsNothing);
-      expect(find.text('조건을 선택하고\n추천 받기를 눌러 주세요.'), findsOneWidget);
+      expect(find.text('추천 받기'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
 
       await tester.tap(find.text('여자'));
       await tester.pumpAndSettle();
@@ -82,7 +111,8 @@ void main() {
         repository.requests.last.location.longitude,
         controller.location.longitude,
       );
-      expect(find.text('추천 화장실을 찾고 있어요'), findsOneWidget);
+      expect(find.text('추천 받기'), findsOneWidget);
+      expect(find.text('추천 화장실을 찾고 있어요'), findsNothing);
       expect(tester.widget<FilledButton>(_requestButton).onPressed, isNull);
       pending.complete(repository.result);
       await tester.pumpAndSettle();
@@ -129,8 +159,8 @@ void main() {
         expect(tester.widget<SwitchListTile>(_bidetToggle).value, isTrue);
         repository.failure = null;
         repository.result = _result(1);
-        await tester.ensureVisible(find.text('다시 확인'));
-        await tester.tap(find.text('다시 확인'));
+        await tester.ensureVisible(_requestButton);
+        await tester.tap(_requestButton);
         await tester.pumpAndSettle();
         expect(find.text('본관 2층'), findsOneWidget);
         expect(repository.requests.last.bidet, isTrue);
@@ -187,7 +217,7 @@ void main() {
   );
 
   testWidgets(
-    'sensor events replace the displayed recommendation without reloading the list',
+    'last stall updates in place while the next recommendation is pending',
     (tester) async {
       final repository = _RecommendationRepository();
       await openScreen(tester, repository);
@@ -196,6 +226,9 @@ void main() {
       expect(find.text('본관 1층'), findsOneWidget);
       final listRequests = repository.listRequests;
       final requests = repository.requests.length;
+      final roomElement = tester.element(find.text('본관 1층'));
+      final pending = Completer<Recommendation>();
+      repository.pending = pending;
       repository.result = _result(1);
       repository.events.add(
         const StallUpdate(
@@ -208,15 +241,129 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('본관 1층'), findsNothing);
-      expect(find.text('추천 화장실을 찾고 있어요'), findsOneWidget);
+      expect(tester.element(find.text('본관 1층')), same(roomElement));
+      expect(find.text('빈칸 0 / 3'), findsOneWidget);
+      expect(find.text('지금 추천하는 화장실'), findsOneWidget);
+      expect(find.text('현재 빈칸과 거리로 추천했어요.'), findsOneWidget);
+      expect(find.text('현재 모두 사용 중이에요.\n가장 가까운 화장실을 안내해요.'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('추천 확인 중…'), findsNothing);
+      final detailButton = find.widgetWithText(TextButton, '칸별 상태 보기');
+      expect(tester.widget<TextButton>(detailButton).onPressed, isNull);
       await tester.pump(const Duration(milliseconds: 20));
+      expect(tester.element(find.text('본관 1층')), same(roomElement));
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      pending.complete(repository.result);
       await tester.pumpAndSettle();
       expect(find.text('본관 2층'), findsOneWidget);
+      expect(find.text('지금 추천하는 화장실'), findsOneWidget);
+      expect(tester.widget<TextButton>(detailButton).onPressed, isNotNull);
       expect(repository.requests.length, requests + 1);
       expect(repository.listRequests, listRequests);
     },
   );
+
+  testWidgets('available recommendation keeps its layout during live updates', (
+    tester,
+  ) async {
+    final repository = _RecommendationRepository()..result = _result(1);
+    await openScreen(tester, repository);
+    await tester.tap(_requestButton);
+    await tester.pumpAndSettle();
+    final card = find.byType(RecommendationResult);
+    final before = tester.getRect(card);
+    final roomElement = tester.element(find.text('본관 2층'));
+    final pending = Completer<Recommendation>();
+    repository.pending = pending;
+    const event = StallUpdate(
+      restroomId: 2,
+      stallId: 7,
+      occupied: true,
+      totalStalls: 5,
+      availableStalls: 1,
+      availableBidetStalls: 1,
+    );
+    repository.events.add(event);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('빈칸 1 / 5'), findsOneWidget);
+    expect(find.text('지금 추천하는 화장실'), findsOneWidget);
+    expect(tester.element(find.text('본관 2층')), same(roomElement));
+    expect(tester.getRect(card), before);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('추천 확인 중…'), findsNothing);
+    pending.complete(_result(1).withRestroom(_result(1).restroom.apply(event)));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(card), before);
+    expect(tester.element(find.text('본관 2층')), same(roomElement));
+  });
+
+  testWidgets('bidet refresh keeps the card and empty responses do not flash', (
+    tester,
+  ) async {
+    final repository = _RecommendationRepository()
+      ..result = Recommendation(
+        restroom: MockRestroomRepository.fixtures[1],
+        statisticsUsed: true,
+        historicalAvailabilityRate: 0.82,
+        historicalBidetAvailabilityRate: 0.65,
+      );
+    await openScreen(tester, repository);
+    await tester.tap(_requestButton);
+    await tester.pumpAndSettle();
+    final pending = Completer<Recommendation>();
+    repository.pending = pending;
+    final roomElement = tester.element(find.text('본관 2층'));
+    final resultText = find.descendant(
+      of: find.byType(RecommendationResult),
+      matching: find.byType(Text),
+    );
+    final beforeText = tester
+        .widgetList<Text>(resultText)
+        .map((text) => text.data)
+        .toList();
+    await tester.tap(_bidetToggle);
+    await tester.pump();
+    expect(tester.widget<SwitchListTile>(_bidetToggle).value, isTrue);
+    expect(tester.element(find.text('본관 2층')), same(roomElement));
+    expect(
+      tester.widgetList<Text>(resultText).map((text) => text.data),
+      beforeText,
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.textContaining('빈칸 존재 비율 82%'), findsOneWidget);
+    expect(find.textContaining('비데 빈칸 존재 비율'), findsNothing);
+    pending.completeError(
+      const RepositoryException(
+        'Not found',
+        statusCode: 404,
+        detail: 'No available bidet stalls',
+      ),
+    );
+    await tester.pumpAndSettle();
+    const message = '현재 사용 가능하다고 확인된 비데 칸이 없어요.';
+    expect(find.text(message), findsOneWidget);
+    final recovery = Completer<Recommendation>();
+    repository.pending = recovery;
+    repository.events.add(
+      const StallUpdate(
+        restroomId: 1,
+        stallId: 1,
+        occupied: false,
+        totalStalls: 3,
+        availableStalls: 2,
+        availableBidetStalls: 1,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text(message), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    recovery.complete(repository.result);
+    await tester.pumpAndSettle();
+    expect(find.text(message), findsNothing);
+    expect(find.textContaining('비데 빈칸 존재 비율 65%'), findsOneWidget);
+  });
 
   testWidgets(
     'narrow screen with large text can request and reach result and location',
@@ -257,7 +404,12 @@ void main() {
       expect(repository.requests, isEmpty);
       await tester.tap(_requestButton);
       await tester.pump();
-      expect(find.text('GPS로 현재 위치를 확인하고 있어요'), findsOneWidget);
+      expect(find.text('GPS로 현재 위치를 확인하고 있어요'), findsNothing);
+      expect(find.text('추천 받기'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('추천 받기'), findsOneWidget);
       expect(tester.widget<FilledButton>(_requestButton).onPressed, isNull);
       await tester.tap(_requestButton);
       expect(gpsReads, 1);
@@ -268,6 +420,41 @@ void main() {
       expect(find.text('현재 GPS 위치 · 위치 변경'), findsOneWidget);
     },
   );
+
+  testWidgets('another request retains the result through GPS and API wait', (
+    tester,
+  ) async {
+    final repository = _RecommendationRepository();
+    final gps = Completer<UserLocation>();
+    var reads = 0;
+    await openScreen(
+      tester,
+      repository,
+      locationService: LocationService(
+        gpsReader: (_) async => ++reads == 1 ? _gps : await gps.future,
+      ),
+    );
+    await tester.tap(_requestButton);
+    await tester.pumpAndSettle();
+    final previous = tester.element(find.text('본관 1층'));
+    final pending = Completer<Recommendation>();
+    repository.pending = pending;
+    await tester.tap(_requestButton);
+    await tester.pump();
+    expect(tester.element(find.text('본관 1층')), same(previous));
+    expect(find.text('추천 받기'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    gps.complete(_gps);
+    await tester.pump();
+    expect(tester.element(find.text('본관 1층')), same(previous));
+    expect(find.text('추천 확인 중…'), findsNothing);
+    expect(find.text('현재 위치 확인 중…'), findsNothing);
+    pending.complete(_result(1));
+    await tester.pumpAndSettle();
+    expect(find.text('본관 1층'), findsNothing);
+    expect(find.text('본관 2층'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
 
   testWidgets('GPS error offers settings and retry without campus fallback', (
     tester,
@@ -296,8 +483,8 @@ void main() {
     expect(find.text('지금 추천하는 화장실'), findsNothing);
     expect(repository.requests, isEmpty);
     denied = false;
-    await tester.ensureVisible(find.text('GPS 다시 확인'));
-    await tester.tap(find.text('GPS 다시 확인'));
+    await tester.ensureVisible(_requestButton);
+    await tester.tap(_requestButton);
     await tester.pumpAndSettle();
     expect(repository.requests.single.location, same(_gps));
     expect(find.text('본관 1층'), findsOneWidget);

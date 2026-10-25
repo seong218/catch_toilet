@@ -71,7 +71,10 @@ class SimulationAPITests(sensor_tests.SensorAPIFixture):
             self.assertEqual(restored["simulated_stalls"], 0)
         self.assertTrue(self.detail()["stalls"][0]["occupied"])
         with self.sessions() as db:
-            self.assertEqual(db.get(Sensor, self.sensor_id).last_sequence, 1)
+            sensor = db.get(Sensor, self.sensor_id)
+            self.assertEqual(sensor.last_sequence, 0)  # Legacy data is untouched.
+            self.assertTrue(sensor.last_occupied)
+            self.assertIsNotNone(sensor.last_seen_at)
 
     def test_unknown_override_and_reset_to_unknown_reach_websocket(self):
         with self.sessions.begin() as db:

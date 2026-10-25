@@ -26,15 +26,43 @@ class RecommendationScreen extends StatefulWidget {
 
 class _RecommendationScreenState extends State<RecommendationScreen> {
   bool _hasRequested = false;
+  bool _requesting = false;
+  bool _showProgress = false;
+  Timer? _progressTimer;
 
-  void _request() {
-    if (_hasRequested &&
-        (widget.controller.recommendationLoading ||
-            widget.controller.recommendationLocating)) {
+  Future<void> _request() async {
+    if (_requesting ||
+        (_hasRequested &&
+            (widget.controller.recommendationLoading ||
+                widget.controller.recommendationLocating))) {
       return;
     }
-    setState(() => _hasRequested = true);
-    unawaited(widget.controller.requestRecommendation());
+    setState(() {
+      _hasRequested = true;
+      _requesting = true;
+    });
+    // Reserve a small indicator for longer requests; fast responses do not
+    // flash a loading state or change the button's label.
+    _progressTimer = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) setState(() => _showProgress = true);
+    });
+    try {
+      await widget.controller.requestRecommendation();
+    } finally {
+      _progressTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          _requesting = false;
+          _showProgress = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _progressTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -43,9 +71,10 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
     builder: (context, _) {
       final controller = widget.controller;
       final busy =
-          _hasRequested &&
-          (controller.recommendationLoading ||
-              controller.recommendationLocating);
+          _requesting ||
+          (_hasRequested &&
+              (controller.recommendationLoading ||
+                  controller.recommendationLocating));
       final narrow = MediaQuery.sizeOf(context).width < 360;
       return ListView(
         key: const PageStorageKey('recommendation'),
@@ -140,7 +169,7 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.black,
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor: const Color(0xFF555555),
+                    disabledBackgroundColor: Colors.black,
                     disabledForegroundColor: Colors.white,
                     minimumSize: const Size.fromHeight(44),
                     padding: const EdgeInsets.symmetric(
@@ -156,12 +185,23 @@ class _RecommendationScreenState extends State<RecommendationScreen> {
                       height: 1.2,
                     ),
                   ),
-                  child: Text(
-                    controller.recommendationLocating
-                        ? '현재 위치 확인 중…'
-                        : busy
-                        ? '추천 확인 중…'
-                        : '추천 받기',
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: _showProgress
+                            ? const CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              )
+                            : null,
+                      ),
+                      const Expanded(
+                        child: Text('추천 받기', textAlign: TextAlign.center),
+                      ),
+                      const SizedBox(width: 20),
+                    ],
                   ),
                 ),
               ],

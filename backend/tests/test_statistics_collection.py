@@ -34,7 +34,6 @@ class StatisticsCollectionTests(sensor_tests.SensorAPIFixture):
         with self.sessions.begin() as db:
             sensor = db.get(Sensor, self.sensor_id)
             sensor.last_seen_at = self.now if seen is None else seen
-            sensor.last_sequence = 1
             sensor.last_occupied = occupied
             db.get(Stall, self.stall_id).occupied = occupied
 
@@ -69,7 +68,6 @@ class StatisticsCollectionTests(sensor_tests.SensorAPIFixture):
             (Sensor, self.sensor_id, "last_seen_at", self.now - timedelta(seconds=301)),
             (Sensor, self.sensor_id, "last_seen_at", self.now + timedelta(seconds=1)),
             (Sensor, self.sensor_id, "last_seen_at", None),
-            (Sensor, self.sensor_id, "last_sequence", 0),
             (Sensor, self.sensor_id, "active", False),
             (Sensor, self.sensor_id, "last_occupied", True),
             (Stall, self.stall_id, "occupied", None),
@@ -91,7 +89,7 @@ class StatisticsCollectionTests(sensor_tests.SensorAPIFixture):
         self.observe()
         with self.sessions.begin() as db:
             db.add(Sensor(restroom_id=self.room_id, stall_id=self.stall_id,
-                          device_id="extra", sensor_type="SW-520D", last_sequence=2,
+                          device_id="extra", sensor_type="SW-520D",
                           last_occupied=False, last_seen_at=self.now))
         self.assertEqual(self.capture(), 1)
         with self.sessions.begin() as db:
@@ -155,7 +153,7 @@ class StatisticsCollectionTests(sensor_tests.SensorAPIFixture):
                 stall = Stall(restroom=room, stall_number=number, occupied=True, has_bidet=False)
                 db.add_all([stall, Sensor(
                     restroom=room, stall=stall, device_id=f"report-{number}", sensor_type="SW-520D",
-                    last_sequence=1, last_occupied=True, last_seen_at=self.now,
+                    last_occupied=True, last_seen_at=self.now,
                 )])
             db.flush()
             other_id = room.id

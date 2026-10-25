@@ -35,7 +35,7 @@ class SensorAuthenticationTests(unittest.TestCase):
 
     def send(self, header=None, *, device="sensor-a", params=None):
         return self.client.post(
-            "/api/sensors/stall", json={"device_id": device, "occupied": True, "sequence": 1},
+            "/api/sensors/stall", json={"device_id": device, "occupied": True},
             headers={} if header is None else {"Authorization": header}, params=params,
         )
 

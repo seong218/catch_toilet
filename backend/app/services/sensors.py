@@ -20,12 +20,8 @@ class InvalidSensorMappingError(Exception):
     """The sensor's restroom/stall mapping is missing or inconsistent."""
 
 
-class StaleSensorSequenceError(Exception):
-    """An older request, or conflicting reuse of a sequence number."""
-
-
 def update_stall_occupancy(
-    db: Session, device_id: str, occupied: bool, sequence: int, *, minimum_interval: float = 1,
+    db: Session, device_id: str, occupied: bool, *, minimum_interval: float = 1,
 ) -> StallUpdated | None:
     """Own one transaction; return only after commit succeeds.
 
@@ -40,10 +36,6 @@ def update_stall_occupancy(
             raise SensorNotFoundError
         if not sensor.active:
             raise InactiveSensorError
-        if sequence < sensor.last_sequence or (sequence == sensor.last_sequence and occupied != sensor.last_occupied):
-            raise StaleSensorSequenceError
-        if sequence == sensor.last_sequence:
-            return None
         if sensor.stall_id is None or sensor.restroom_id is None:
             raise InvalidSensorMappingError
 
@@ -55,8 +47,8 @@ def update_stall_occupancy(
         ):
             raise InvalidSensorMappingError
 
-        # Every new accepted sequence is a fresh observation, including a
-        # periodic unchanged-state report. Exact retries do not extend liveness.
+        # Every accepted report refreshes liveness, including unchanged states.
+        # Client ordering/replay detection is no longer part of the API.
         observed_at = db.scalar(select(func.clock_timestamp()))
         changed = stall.occupied != occupied
         if changed:
@@ -88,7 +80,6 @@ def update_stall_occupancy(
                 available_bidet_stalls=summary["available_bidet_stalls"],
                 unknown_stalls=summary["unknown_stalls"],
             )
-        sensor.last_sequence = sequence
         sensor.last_occupied = occupied
         sensor.last_seen_at = observed_at
         # An unchanged state keeps the stall timestamp and event history intact.

@@ -336,14 +336,14 @@ docker compose exec backend python -m app.statistics_tracking status
 - `ENABLE_STATISTICS_COLLECTION=false`인 환경에서 `start`는 오류를 반환한다. 서버 환경을 true로 바꾸고 재실행해야 한다.
 
 수집 대상은 활성 화장실 중 **모든 칸의 상태가 확인되고 최근 센서 보고가 있는 곳**이다.
-각 칸에는 활성 센서의 양수 `sequence`, 칸 상태와 일치하는 마지막 보고, 최근 300초 이내의 `last_seen_at`이 필요하다.
+각 칸에는 활성 센서의 칸 상태와 일치하는 마지막 보고, 최근 300초 이내의 `last_seen_at`이 필요하다.
 미관측·오래된 보고·센서 없는 칸이 하나라도 있으면 해당 화장실의 표본을 건너뛴다.
 시설 seed 값이나 시뮬레이션 화면의 임시 상태로 통계를 만들지 않으며, 원본 DB 상태만 읽는다.
 `has_bidet` 미확인 칸이 있으면 일반 빈칸 표본은 저장하되 `bidet_sample_valid=false`로 비데 통계에서는 제외한다.
 
-**IoT 연동:** 상태 변경 전송에 더해, 같은 상태라도 약 60초마다 새 `sequence`로 기존 Sensor API에 전송해야 한다.
-새 순번의 동일 상태 요청은 순번과 `last_seen_at`을 갱신하고, 칸의 `updated_at`·이벤트·WebSocket 방송은 유지한다.
-같은 순번의 재전송은 새 관측으로 취급하지 않는다. 요청·응답 스키마는 바뀌지 않는다.
+**IoT 연동:** 상태 변경 전송에 더해, 같은 상태라도 약 60초마다 현재 상태를 Sensor API에 보고해야 한다.
+본문은 `device_id`, `occupied`만 필요하다. 정상 처리된 모든 보고는 `last_seen_at`을 갱신한다.
+같은 상태라면 칸의 `updated_at`·이벤트·WebSocket 방송은 유지한다. `last_sequence`는 더 이상 관측 판단에 사용하지 않는다.
 `last_seen_at`은 migration에서 과거 시각으로 채우지 않으므로 실제 보고 전에는 수집되지 않는다.
 펌웨어의 정기 보고 변경은 IoT 담당자가 적용해야 한다.
 
@@ -465,26 +465,26 @@ docker compose up -d --build --wait backend
 
 테스트 터미널의 `SENSOR_API_KEY`에 해당 기기의 키를 설정한 뒤 호출한다.
 Swagger UI에서는 **Authorize → SensorBearer**에 키만 입력한다.
-아래 `sequence:1`은 아직 요청하지 않은 새 기기의 예시다. 기존 기기는 마지막 승인 번호보다 큰 번호를 사용한다.
+본문은 `device_id`, `occupied`만 받는다. 구형 클라이언트가 `sequence`를 보내도 무시한다.
 
 ```bash
 curl -i -X POST http://localhost:8000/api/sensors/stall \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${SENSOR_API_KEY:?Set the device-specific key}" \
-  -d '{"device_id":"stall-a-01","occupied":true,"sequence":1}'
+  -d '{"device_id":"stall-a-01","occupied":true}'
 ```
 
-성공은 `200 {"success":true,"changed":true}`이며, 같은 번호·같은 상태를 재전송하면
+성공은 `200 {"success":true,"changed":true}`이며, 현재와 같은 상태를 보고하면
 `200 {"success":true,"changed":false}`다. 다음 순서로 처리한다.
 
-1. `device_id`는 128자 이하의 ASCII 식별자이며 공백·제어문자를 거부한다. `sequence`는 기기별로 증가하는 양의 정수다.
+1. `device_id`는 128자 이하의 ASCII 식별자이며 공백·제어문자를 거부한다. `sequence`는 입력 계약에서 제거되었다.
    `occupied`는 JSON `true`/`false`만 허용하며 숫자나 문자열 boolean은 `422`다.
-2. 한 트랜잭션에서 센서 행을 잠근 뒤 존재·활성 상태와 마지막 `sequence`를 확인한다.
-   오래된 번호·같은 번호의 다른 상태는 `409`, 같은 번호·같은 상태는 `changed=false`다.
+2. 한 트랜잭션에서 센서 행을 잠근 뒤 존재·활성 상태를 확인한다.
+   요청은 처리된 순서대로 반영하며 오래된 요청을 구분하지 않는다. 현재와 같은 상태는 `changed=false`다.
 3. 연결된 칸 행을 `FOR UPDATE`로 잠그고 화장실 존재·소속 일치를 확인한다.
    서로 다른 센서가 같은 칸을 갱신하더라도 칸 잠금을 기준으로 순차 처리한다.
 4. 상태가 같으면 Stall UPDATE와 SensorEvent INSERT를 모두 생략하며 `updated_at`도 유지한다.
-   새 번호는 `Sensor.last_sequence/last_occupied/last_seen_at`에 원자적으로 저장한다. 상태 변경 간격 제한은 `429`다.
+   정상 요청은 `Sensor.last_occupied/last_seen_at`을 원자적으로 갱신한다. 기존 `last_sequence` 값은 보존한다. 상태 변경 간격 제한은 `429`다.
 5. 상태가 바뀌면 `occupied`와 `updated_at`을 갱신하고 `occupancy_changed` 이벤트를 같은 트랜잭션에 저장한다.
    이벤트 `value`는 변경 후 상태다. 잠금 획득 뒤 DB의 `clock_timestamp()`를 읽어 Stall과 이벤트에 같은 처리 시각을 기록한다.
 6. 같은 트랜잭션에서 변경 후 집계값을 읽어 이벤트를 준비한다. commit 성공 뒤에만 WebSocket 큐에 넣고 성공 응답을 반환한다.
@@ -495,7 +495,6 @@ curl -i -X POST http://localhost:8000/api/sensors/stall \
 | 키 누락·오류·다른 기기의 키·해당 기기의 키 미설정 | `401 {"detail":"Invalid sensor credentials"}`, `WWW-Authenticate: Bearer` |
 | 인증은 성공했지만 DB에 등록되지 않은 기기 | `404 {"detail":"Sensor not found"}` |
 | 비활성 센서 | `409 {"detail":"Sensor is inactive"}` |
-| 오래된 순번·동일 순번의 다른 상태 | `409 {"detail":"Stale sensor sequence"}` |
 | 연결된 칸·화장실 없음 또는 소속 불일치 | `409 {"detail":"Sensor mapping is invalid"}` |
 | 누락·null·잘못된 타입·잘못된 ID·JSON | `422`, `loc/msg/type` 검증 오류 배열 |
 | 요청 속도·상태 변경 간격 제한 | `429 {"detail":"Sensor rate limit exceeded"}`, `Retry-After` |
@@ -503,7 +502,8 @@ curl -i -X POST http://localhost:8000/api/sensors/stall \
 | DB 연결·저장 실패 | `503 {"detail":"Database unavailable"}` |
 
 현 DB 제약조건은 연결 누락·소속 불일치를 막지만 API도 방어적으로 검사한다.
-`0003` migration이 재전송 방지용 Sensor 순번·마지막 상태와 이벤트 보관용 인덱스를 추가한다.
+`0003`에서 추가한 `last_sequence`는 기존 DB 호환을 위해 남겨두지만 API와 통계에서는 사용하지 않는다.
+이번 요청 계약 변경에는 DB migration이 필요하지 않다.
 서비스 `update_stall_occupancy`는 시작된 트랜잭션이 없는 새 Session을 받아 트랜잭션을 직접 관리한다.
 반환값은 commit된 변경의 `StallUpdated` 이벤트이며, 상태가 같으면 `None`이다.
 Sensor 라우터는 manager의 프로세스 내 잠금으로 트랜잭션과 방송 큐 등록을 순차 처리한다.
@@ -516,21 +516,19 @@ DB 작업은 thread pool에서 실행하여 WebSocket 전송과 다른 비동기
 운영 DB와 분리하거나 `ENABLE_STATISTICS_COLLECTION=false`로 실행한다.
 
 ```bash
-sequence=${SENSOR_SEQUENCE:?Set the next device sequence}
 for occupied in false true true false; do
   curl --fail-with-body -sS -X POST http://localhost:8000/api/sensors/stall \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer ${SENSOR_API_KEY:?Set the device-specific key}" \
-    -d "{\"device_id\":\"stall-a-01\",\"occupied\":$occupied,\"sequence\":$sequence}" || break
-  sequence=$((sequence + 1))
+    -d "{\"device_id\":\"stall-a-01\",\"occupied\":$occupied}" || break
   sleep 5
   echo
 done
 ```
 
-IoT는 같은 기기의 요청을 겹쳐 보내지 않는다. 새로운 상태는 새 번호를 부여하고 응답 유실 재시도는 원래 번호·상태를 유지한다.
-네트워크 단절은 DB 미반영을 뜻하지 않는다. 응답 유실은 동일 번호·동일 상태로 재시도한다.
-`sequence`를 재부팅 후에도 보존해야 하며, `429`에서는 `Retry-After`만큼 기다린다.
+IoT는 같은 기기의 요청을 겹쳐 보내지 않는다. 네트워크 단절은 DB 미반영을 뜻하지 않는다.
+재연결·재시도에서는 센서의 최신 상태를 보고하고, 이미 새 상태를 보냈다면 이전 상태를 다시 보내지 않는다.
+`429`에서는 `Retry-After`만큼 기다린다. 클라이언트의 순번 관리는 필요하지 않다.
 
 ## WebSocket 실시간 업데이트
 
@@ -873,7 +871,7 @@ Flutter 담당자 전달 정보는 [FLUTTER_HANDOFF.md](FLUTTER_HANDOFF.md)에 �
   CLI 도움말과 `git diff --check`도 통과했다.
 - 실행: 위 [통계 service](#통계-service)의 migration·권한 갱신·Backend 재실행 명령을 적용한다.
   이번 작업에서는 실행 중인 공유 서버의 DB migration이나 컨테이너 재배포는 수행하지 않았다.
-- IoT 인계: 같은 상태라도 약 60초마다 새 순번으로 보고해야 한다. 5분간 보고가 없으면 해당 칸이 속한
+- IoT 인계: 같은 상태라도 약 60초마다 현재 상태를 보고해야 한다. 5분간 보고가 없으면 해당 칸이 속한
   화장실은 새 표본에서 제외된다. 주기 전송 펌웨어와 통계 UI/공개 API는 이번 범위에 포함하지 않았다.
   HTTP/WebSocket 요청·응답 계약과 추가 의존성 변경은 없다. 남아 있는 테스트 실패는 없다.
 
@@ -892,3 +890,17 @@ Flutter 담당자 전달 정보는 [FLUTTER_HANDOFF.md](FLUTTER_HANDOFF.md)에 �
   중지·재시작 후 수집, CLI 정상/DB 오류 응답과 기존 기능을 검증했다.
 - 실행 중인 공유 서버에는 migration·배포·추적 시작을 수행하지 않았다. 추적 시작 요청이 오면 대상 서버에 적용한 뒤 `start`로 시작한다.
   IoT 정기 보고 조건은 그대로이며 HTTP/WebSocket 계약·Flutter 화면·의존성 추가는 없다. 남은 테스트 실패는 없다.
+
+## 센서 요청 순번 제거 인계 (2026-10-25)
+
+- `POST /api/sensors/stall` 본문은 `device_id`, `occupied` 두 필드만 필요하다. 기존 클라이언트의 `sequence`는 무시한다.
+  Bearer 인증·요청 제한은 유지하며 정상 보고마다 수신 시각을 갱신한다. 상태가 바뀔 때만 이벤트를 저장하고 WebSocket으로 전달한다.
+- 수정: 센서 schema/API/service/model 설명, 통계 관측 조건, 관련 테스트와 API·Backend·Database 인계 문서.
+  새 소스 파일·의존성·migration은 없다. 기존 `last_sequence` 컬럼과 값은 유지하되 사용하지 않는다.
+- 실행: 기존 인증 헤더와 두 필드 본문으로 요청한다. 센서 전송기는 최신 상태를 보고해야 하며 과거 요청·순서 뒤집기는 구분하지 않는다.
+  Flutter 수정은 필요 없다. 구형 USB 전송기도 그대로 요청할 수 있다.
+- 검증: 별도 임시 PostgreSQL에서 전체 **171개 테스트 통과**. 회귀 suite는 총 2회 실행했고,
+  첫 실행의 로컬 DB 미기동 문제를 임시 DB로 해결했다. 인증, 중복/동시 요청, 상태 변경·방송, 관측 수집과 기존 기능을 검증했다.
+- 운영 Backend에 반영했다. 기존 인증 설정·DB 상태·이벤트·통계 추적 설정을 유지하고 메모리의 시뮬레이션 38칸을 복원했다.
+  현재 상태와 같은 요청으로 순번 없이 `200 / changed=false`, 구형 순번 무시, 잘못된 키 `401`, 수신 시각 갱신을 확인했다.
+  공개 health와 OpenAPI의 두 필드 계약도 확인했다. 이번 변경의 실제 센서 하드웨어 재시험은 수행하지 않았다.

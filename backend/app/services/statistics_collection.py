@@ -41,7 +41,6 @@ def capture_restroom_snapshots(db: Session, *, now: datetime | None = None) -> i
         Sensor.stall_id == Stall.id,
         Sensor.restroom_id == Stall.restroom_id,
         Sensor.active.is_(True),
-        Sensor.last_sequence > 0,
         Sensor.last_occupied == Stall.occupied,
         Sensor.last_seen_at >= cutoff,
         Sensor.last_seen_at >= tracking.started_at,

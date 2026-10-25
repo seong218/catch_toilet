@@ -556,18 +556,18 @@ GET /api/restrooms/recommend?x=10&y=20&bidet_required=false
 목적: 등록된 센서가 보고한 현재 사용 상태를 연결된 칸에 반영한다. 새로운 센서나 칸을 생성하는 API가 아니다.
 
 - 필수 인증: `Authorization: Bearer <해당 device_id의 비밀 키>`.
-- 재전송 방지: 필수 정수 `sequence`(1~9223372036854775807)를 기기별로 단조 증가시킨다.
-  서버는 마지막 번호와 상태를 DB 트랜잭션에 저장한다. 작은 번호 또는 같은 번호에 다른 상태는 `409 / Stale sensor sequence`다.
-  같은 번호·같은 상태는 응답 유실 재시도로 취급하여 `changed=false`를 반환하며 상태·이벤트·방송을 변경하지 않는다.
-  기기는 재부팅 후에도 번호를 유지하고, 응답 유실 재시도에는 동일한 번호와 상태를 사용한다. 키 교체만으로 번호가 초기화되지 않는다.
+- 본문에는 `device_id`, `occupied`만 필요하다. `sequence`는 제거되었으며 기존 클라이언트가 보내도 무시한다.
+- 인증된 요청이 처리되는 순서대로 상태를 반영한다. 오래된 요청·지연된 재전송을 구분하지 않는다.
+  현재 상태와 같으면 `changed=false`이며 칸 상태·이벤트·방송은 중복 생성하지 않는다.
+  정상 처리된 모든 보고는 같은 상태의 재시도도 포함해 `last_seen_at`을 갱신한다.
 - 서버 요청 속도 제한·최소 상태 유지시간을 넘으면 `429 / Sensor rate limit exceeded`와 `Retry-After`(초)를 반환한다.
-  거절된 요청은 번호도 소비하지 않는다. 단일 프로세스의 기기별/전체 요청 제한과 DB의 칸별 상태 변경 간격을 함께 적용한다.
+  거절된 요청은 상태와 수신 시각을 갱신하지 않는다. 단일 프로세스의 기기별/전체 요청 제한과 DB의 칸별 상태 변경 간격을 함께 적용한다.
 - 서버의 `SENSOR_API_KEYS` JSON 객체에 기기별로 서로 다른 키를 설정한다. `device_id` 자체는 자격 증명이 아니다.
   키는 `secrets.token_urlsafe(32)` 등으로 생성한 32바이트 이상의 난수이며, URL-safe 문자 43~128자로 설정한다.
   다른 기기의 키로는 요청할 수 없다. 키가 누락되거나 틀린 경우, 키가 설정되지 않은 기기인 경우 모두 같은 `401`로 응답한다.
 - 설정이 없거나 빈 객체이면 센서 쓰기를 `503`으로 차단한다. 인증 없이 쓰기를 허용하는 fallback은 없다.
 - 인증은 DB 조회·수정 전에 검사하며 실패 시 DB·이벤트·WebSocket에 영향을 주지 않는다.
-  키는 서버와 해당 IoT 기기에만 보관하고 Flutter 앱·저장소에는 넣지 않는다. 키를 교체하거나 삭제한 뒤 Backend를 재생성하면 이전 키는 무효다.
+  키는 서버와 해당 센서를 전송하는 IoT 기기 또는 USB 연결 PC에 보관하고 Flutter 앱·저장소에는 넣지 않는다. 키를 교체하거나 삭제한 뒤 Backend를 재생성하면 이전 키는 무효다.
 - Bearer 키를 보내는 외부 연결은 HTTPS를 사용한다. 로컬 HTTP는 개발용이며 도청·캡처된 요청의 재생을 막지 못한다.
 - Path parameter: 없음.
 - Query parameter: 없음.
@@ -577,7 +577,6 @@ GET /api/restrooms/recommend?x=10&y=20&bidet_required=false
 | --- | --- | --- | --- | --- |
 | `device_id` | string | 예 | 아니오 | ASCII 영숫자로 시작하며 영숫자·`.`·`_`·`:`·`-`만 허용, 최대 128자. 대소문자를 구분하며 등록값과 정확히 일치해야 함 |
 | `occupied` | boolean | 예 | 아니오 | 안정화 및 센서 방향 변환을 마친 논리 상태. JSON boolean만 허용하며 `0`, `1`, `"true"` 등으로 대체하지 않음 |
-| `sequence` | integer | 예 | 아니오 | 기기별 단조 증가 번호. boolean·문자열·소수 불가 |
 
 ```http
 POST /api/sensors/stall
@@ -588,8 +587,7 @@ Authorization: Bearer <device-specific-secret>
 ```json
 {
   "device_id": "stall-a-01",
-  "occupied": true,
-  "sequence": 1
+  "occupied": true
 }
 ```
 
@@ -625,14 +623,14 @@ Authorization: Bearer <device-specific-secret>
 3. 커밋된 변경에 대해서만 `stall.updated`를 방송한다. 저장 실패 시 칸과 이벤트 모두 반영하지 않고 성공 응답이나 이벤트를 보내지 않는다.
 4. 상태가 같으면 `changed: false`다. `updated_at`을 변경하거나 중복 `SensorEvent`를 추가하거나 WebSocket 이벤트를 보내지 않는다.
 5. 성공은 DB 반영 여부를 뜻하며 모든 WebSocket 수신자의 수신 완료를 보장하지 않는다. 커밋 후 방송 실패 때문에 이미 저장한 변경을 롤백하지 않는다. 이벤트와 HTTP 응답 중 클라이언트에 먼저 도착하는 것은 보장하지 않는다.
-6. 기기별 `sequence`와 마지막 요청 상태를 같은 트랜잭션에서 기록한다. 낮은 번호·같은 번호의 다른 상태는 거부한다. 새로운 번호의 동일 상태는 번호만 전진시키며 칸·이벤트·방송을 변경하지 않는다.
+6. 마지막 보고 상태와 `last_seen_at`을 같은 트랜잭션에서 기록한다. 같은 상태의 정기 보고도 수신 시각을 갱신한다.
+   기존 DB의 `last_sequence`는 보존하지만 API 처리·통계 관측 판단에 사용하거나 갱신하지 않는다.
 
 | 주요 오류 | 조건 | Body |
 | --- | --- | --- |
 | `401` | 키 누락·오류·다른 기기의 키·해당 기기의 키 미설정 | `{"detail":"Invalid sensor credentials"}`, `WWW-Authenticate: Bearer` |
 | `404` | 키 인증은 성공했지만 DB에 등록되지 않은 `device_id` | `{"detail":"Sensor not found"}` |
 | `409` | 센서가 `active == false` | `{"detail":"Sensor is inactive"}` |
-| `409` | 오래된 번호 또는 동일 번호에 다른 상태 | `{"detail":"Stale sensor sequence"}` |
 | `409` | 연결된 칸·화장실이 없거나 소속 관계가 불일치 | `{"detail":"Sensor mapping is invalid"}` |
 | `422` | 필드 누락, null, 잘못된 타입, 비어 있는 식별자 또는 JSON 구문 오류 | 공통 검증 오류 배열 |
 | `429` | 요청 속도·최소 상태 유지시간 제한 | `{"detail":"Sensor rate limit exceeded"}`, `Retry-After` 헤더 |
@@ -640,7 +638,8 @@ Authorization: Bearer <device-specific-secret>
 | `503` | DB 접근 불가 | `{"detail":"Database unavailable"}` |
 
 위 표의 `401`·`404`·`409`·`422`·`429`·`503` 오류에서는 칸 상태 변경과 `SensorEvent` 추가가 없어야 한다.
-응답을 받지 못한 네트워크 단절이나 타임아웃은 DB 미반영을 뜻하지 않는다. 응답 유실 재시도는 동일 번호·동일 상태로 보내고 성공 응답을 확인한다.
+응답을 받지 못한 네트워크 단절이나 타임아웃은 DB 미반영을 뜻하지 않는다.
+재시도 시 센서의 최신 상태를 보고하고 성공 응답을 확인한다. 이미 새 상태를 보냈다면 이전 상태를 다시 보내지 않는다.
 
 ## 9. WS /ws
 
