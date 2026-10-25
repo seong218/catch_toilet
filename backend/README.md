@@ -889,3 +889,25 @@ Flutter 담당자 전달 정보는 [FLUTTER_HANDOFF.md](FLUTTER_HANDOFF.md)에 �
   중지·재시작 후 수집, CLI 정상/DB 오류 응답과 기존 기능을 검증했다.
 - 실행 중인 공유 서버에는 migration·배포·추적 시작을 수행하지 않았다. 추적 시작 요청이 오면 대상 서버에 적용한 뒤 `start`로 시작한다.
   IoT 정기 보고 조건은 그대로이며 HTTP/WebSocket 계약·Flutter 화면·의존성 추가는 없다. 남은 테스트 실패는 없다.
+
+## 통계 기능 서버 적용 결과 (2026-10-25)
+
+- `backend-dev`의 `569e42b`를 `comet-server:~/ct`에 배포했다. DB 백업 후 `0005 → 0007` migration과
+  런타임 권한 갱신, Backend 이미지 재빌드·교체를 완료했다. DB/API 컨테이너 모두 healthy다.
+- 외부 health·목록·추천 API HTTP 200, 화장실 8곳·39칸의 상세 정보 보존을 확인했다.
+  재시작 전에 저장한 39칸의 시뮬레이션 표시 상태도 복원했으며 실제 통계에는 넣지 않았다.
+- 현재 `tracking=false`, `collector_enabled=true`, 시작/중지 시각은 null이다. 추적 시작 요청 전까지 중지 상태로 대기한다.
+  중지 상태의 수집 저장 건수 0, SensorEvent·RestroomSnapshot 각각 0개를 확인했다.
+  실제 런타임 계정의 센서 수신 시각/추적 상태 UPDATE, 스냅샷 INSERT/sequence 권한도 확인했다.
+- 서버에서 실제 추적을 시작할 때 아래 명령을 사용한다. 중지·확인은 마지막 `start`를 `stop`·`status`로 바꾼다.
+
+```bash
+ssh comet-server
+cd ~/ct
+docker compose --env-file backend/.env \
+  -f database/docker-compose.yml -f database/docker-compose.server.yml \
+  exec -T backend python -m app.statistics_tracking start
+```
+
+서버 DB 백업·배포 전 이미지와 표시 상태는 서버의 접근 제한 디렉터리에 보관했다.
+백업 디렉터리는 서버의 `~/.ct-statistics-deployment-backup` 파일로 확인할 수 있다.
