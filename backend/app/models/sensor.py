@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
+    DateTime,
     CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
@@ -50,6 +52,7 @@ class Sensor(Base):
     active: Mapped[bool] = mapped_column(server_default=true())
     last_sequence: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
     last_occupied: Mapped[bool] = mapped_column(server_default=false())
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     restroom: Mapped[Restroom] = relationship(back_populates="sensors")
     # Only this relationship writes stall_id; restroom owns restroom_id.

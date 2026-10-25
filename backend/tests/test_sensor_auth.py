@@ -29,6 +29,8 @@ class SensorAuthenticationTests(unittest.TestCase):
         self.enterContext(patch.dict(app.dependency_overrides, {
             get_settings: lambda: self.settings, get_db: database,
         }))
+        self.enterContext(patch("app.main.get_settings", return_value=
+            self.settings.model_copy(update={"enable_statistics_collection": False})))
         self.client = self.enterContext(TestClient(app))
 
     def send(self, header=None, *, device="sensor-a", params=None):

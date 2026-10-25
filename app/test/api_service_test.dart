@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:catchy_toilet/repositories/api_restroom_repository.dart';
-import 'package:catchy_toilet/repositories/restroom_repository.dart';
-import 'package:catchy_toilet/services/api_service.dart';
-import 'package:catchy_toilet/services/location_service.dart';
+import 'package:catch_toilet/repositories/api_restroom_repository.dart';
+import 'package:catch_toilet/repositories/restroom_repository.dart';
+import 'package:catch_toilet/services/api_service.dart';
+import 'package:catch_toilet/services/location_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';

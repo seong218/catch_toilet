@@ -12,11 +12,15 @@ docker compose up -d --build --wait backend
 docker compose run --rm migrate python -m app.seed
 ```
 
-DB healthcheck 후 일회성 `migrate` 작업이 `0003`까지 적용하고 실행 계정을 설정한다.
+DB healthcheck 후 일회성 `migrate` 작업이 최신 migration까지 적용하고 실행 계정을 설정한다.
 API에는 관리자 자격 증명이 전달되지 않는다. 실행 계정은 superuser/createdb/createrole/replication/bypassrls가 아니다.
-도메인 테이블 SELECT, Stall 상태·Sensor 순번 열 UPDATE, SensorEvent INSERT/DELETE와 해당 ID sequence만 허용한다.
+도메인 테이블 SELECT, Stall 상태·Sensor 순번/마지막 수신 시각 열 UPDATE,
+SensorEvent INSERT/DELETE, RestroomSnapshot INSERT와 두 테이블의 ID sequence USAGE,
+StatisticsTracking의 상태·시각 열 UPDATE만 허용한다.
 테이블·역할 생성, 칸·센서 등록, migration·seed는 관리자 작업에서만 실행한다.
-통계 스냅샷 수집을 별도 구현할 때에도 필요한 계정·권한을 분리한다.
+통계 수집은 같은 제한 계정으로 실행하며 기존 스냅샷의 UPDATE/DELETE 권한은 부여하지 않는다.
+`0007` 적용 시 `docker compose run --rm --build migrate`로 런타임 권한까지 갱신한다.
+추적 제어는 서버의 CLI로만 제공한다. 기본 중지이며 시작 전 관측은 새 추적에 사용하지 않는다.
 
 Compose 밖에서 실행할 경우 먼저 위 migration 작업을 완료한다. 로컬 API에도 제한된 계정을 주입한다.
 다음은 저장소 루트에서 실행하며 비밀번호를 출력하거나 프로세스 인자로 전달하지 않는다.

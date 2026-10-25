@@ -10,7 +10,7 @@ import 'services/api_service.dart';
 void main() {
   try {
     runApp(
-      CatchyToiletApp(
+      CatchToiletApp(
         repository: AppConfig.useMock
             ? MockRestroomRepository()
             : ApiRestroomRepository(ApiService(AppConfig.apiBaseUrl)),

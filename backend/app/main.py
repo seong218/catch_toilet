@@ -19,6 +19,7 @@ from app.errors import distance_error, sensor_rate_error, validation_error
 from app.limits import SensorRateLimiter, SensorRateLimitError
 from app.services.location import InvalidDistanceError
 from app.services.retention import retain_recent_sensor_events
+from app.services.statistics_collection import collect_regular_statistics
 
 
 def initialize_state(app: FastAPI) -> None:
@@ -34,16 +35,22 @@ def initialize_state(app: FastAPI) -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     initialize_state(app)
     retention = asyncio.create_task(retain_recent_sensor_events())
+    statistics = (asyncio.create_task(collect_regular_statistics())
+                  if get_settings().enable_statistics_collection else None)
     try:
         yield
     finally:
         retention.cancel()
-        await asyncio.gather(retention, return_exceptions=True)
+        tasks = [retention]
+        if statistics is not None:
+            statistics.cancel()
+            tasks.append(statistics)
+        await asyncio.gather(*tasks, return_exceptions=True)
         await app.state.connection_manager.close()
         engine.dispose()
 
 
-app = FastAPI(title="Catchy Toilet API", lifespan=lifespan)
+app = FastAPI(title="Catch Toilet API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_allowed_origins,

@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:catchy_toilet/repositories/api_restroom_repository.dart';
-import 'package:catchy_toilet/services/api_service.dart';
-import 'package:catchy_toilet/services/location_service.dart';
-import 'package:catchy_toilet/services/websocket_service.dart';
-import 'package:catchy_toilet/state/app_controller.dart';
+import 'package:catch_toilet/repositories/api_restroom_repository.dart';
+import 'package:catch_toilet/services/api_service.dart';
+import 'package:catch_toilet/services/location_service.dart';
+import 'package:catch_toilet/services/websocket_service.dart';
+import 'package:catch_toilet/state/app_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // In-process contract fixture only, bound to loopback. Not the project Backend.

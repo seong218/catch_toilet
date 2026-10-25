@@ -56,12 +56,17 @@ def main() -> None:
             db.execute(sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {}").format(role))
             db.execute(sql.SQL(
                 "GRANT SELECT ON public.restrooms, public.stalls, public.sensors, "
-                "public.sensor_events, public.restroom_snapshots TO {}"
+                "public.sensor_events, public.restroom_snapshots, public.statistics_tracking TO {}"
             ).format(role))
             db.execute(sql.SQL("GRANT UPDATE (occupied, updated_at) ON public.stalls TO {}").format(role))
-            db.execute(sql.SQL("GRANT UPDATE (last_sequence, last_occupied) ON public.sensors TO {}").format(role))
+            db.execute(sql.SQL("GRANT UPDATE (last_sequence, last_occupied, last_seen_at) ON public.sensors TO {}").format(role))
             db.execute(sql.SQL("GRANT INSERT, DELETE ON public.sensor_events TO {}").format(role))
             db.execute(sql.SQL("GRANT USAGE ON SEQUENCE public.sensor_events_id_seq TO {}").format(role))
+            db.execute(sql.SQL("GRANT INSERT ON public.restroom_snapshots TO {}").format(role))
+            db.execute(sql.SQL("GRANT USAGE ON SEQUENCE public.restroom_snapshots_id_seq TO {}").format(role))
+            db.execute(sql.SQL(
+                "GRANT UPDATE (enabled, started_at, stopped_at) ON public.statistics_tracking TO {}"
+            ).format(role))
     except (psycopg.Error, ValueError):
         # DDL may contain a password; do not expose the driver exception/SQL.
         raise SystemExit("Runtime DB role provisioning failed; check administrator access and role ownership") from None

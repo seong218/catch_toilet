@@ -1,4 +1,4 @@
-# Catchy Toilet · Flutter
+# Catch Toilet · Flutter
 
 지도 탭은 카카오맵을 사용합니다. 실제 지도 표시 전 [네이티브 앱 키 및 무료 사용 설정](docs/KAKAO_MAP_SETUP.md)을 완료하세요. 설정이 없으면 층별 목록을 안내합니다.
 

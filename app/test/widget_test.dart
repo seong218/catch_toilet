@@ -1,10 +1,10 @@
-import 'package:catchy_toilet/app.dart';
-import 'package:catchy_toilet/models/recommendation.dart';
-import 'package:catchy_toilet/repositories/mock_restroom_repository.dart';
-import 'package:catchy_toilet/widgets/bidet_toggle.dart';
-import 'package:catchy_toilet/widgets/recommended_restroom_card.dart';
-import 'package:catchy_toilet/widgets/restroom_floor_plan.dart';
-import 'package:catchy_toilet/widgets/restroom_list_card.dart';
+import 'package:catch_toilet/app.dart';
+import 'package:catch_toilet/models/recommendation.dart';
+import 'package:catch_toilet/repositories/mock_restroom_repository.dart';
+import 'package:catch_toilet/widgets/bidet_toggle.dart';
+import 'package:catch_toilet/widgets/recommended_restroom_card.dart';
+import 'package:catch_toilet/widgets/restroom_floor_plan.dart';
+import 'package:catch_toilet/widgets/restroom_list_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,7 +13,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final repository = _TrackingMockRepository();
-    await tester.pumpWidget(CatchyToiletApp(repository: repository));
+    await tester.pumpWidget(CatchToiletApp(repository: repository));
     await tester.pumpAndSettle();
     expect(find.text('시작하기'), findsOneWidget);
     expect(find.text('CATCH TOILET'), findsOneWidget);
@@ -105,7 +105,7 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(
-      CatchyToiletApp(key: UniqueKey(), repository: MockRestroomRepository()),
+      CatchToiletApp(key: UniqueKey(), repository: MockRestroomRepository()),
     );
     await tester.pumpAndSettle();
     expect(find.text('시작하기'), findsOneWidget);
@@ -118,7 +118,7 @@ void main() {
     tester.platformDispatcher.textScaleFactorTestValue = 1.6;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await tester.pumpWidget(
-      CatchyToiletApp(repository: MockRestroomRepository()),
+      CatchToiletApp(repository: MockRestroomRepository()),
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -172,7 +172,7 @@ void main() {
 
   testWidgets('location uses GPS without floor or XY input', (tester) async {
     await tester.pumpWidget(
-      CatchyToiletApp(repository: MockRestroomRepository()),
+      CatchToiletApp(repository: MockRestroomRepository()),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('시작하기'));

@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     db_statement_timeout_ms: int = Field(default=5000, ge=1)
     min_stat_sample_count: int = Field(default=30, ge=1)
     stat_lookback_days: int = Field(default=56, ge=1, le=3650)
+    enable_statistics_collection: bool = True
+    stat_sensor_max_age_seconds: int = Field(default=300, ge=60, le=3600)
     recommendation_distance_tolerance: float = Field(default=10.0, ge=0, allow_inf_nan=False)
     # Empty configuration disables sensor writes; read APIs remain available.
     sensor_api_keys: Annotated[dict[str, SecretStr], NoDecode] = Field(default_factory=dict)

@@ -1,6 +1,6 @@
-import 'package:catchy_toilet/models/recommendation.dart';
-import 'package:catchy_toilet/models/restroom.dart';
-import 'package:catchy_toilet/models/stall_update.dart';
+import 'package:catch_toilet/models/recommendation.dart';
+import 'package:catch_toilet/models/restroom.dart';
+import 'package:catch_toilet/models/stall_update.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, dynamic> restroomJson() => {

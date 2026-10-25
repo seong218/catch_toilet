@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'package:catchy_toilet/services/location_service.dart';
-import 'package:catchy_toilet/models/restroom.dart';
+import 'package:catch_toilet/services/location_service.dart';
+import 'package:catch_toilet/models/restroom.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'models_test.dart' show detailJson;
 
