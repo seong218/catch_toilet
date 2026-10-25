@@ -38,82 +38,82 @@ class SafeCoordinatesTests(restroom_tests.RestroomAPIFixture):
 
 
 class SensorIntegrityTests(sensor_tests.SensorAPIFixture):
-    def send(self, sequence, occupied, *, device="test-sensor"):
+    def send(self, occupied, *, device="test-sensor", **legacy_fields):
         return self.client.post("/api/sensors/stall", json={
-            "device_id": device, "occupied": occupied, "sequence": sequence,
+            "device_id": device, "occupied": occupied, **legacy_fields,
         }, headers=self.auth_headers(device))
 
-    def test_persistent_sequence_rejects_older_and_conflicting_requests(self):
-        self.assertEqual(self.send(30, False).json(), {"success": True, "changed": False})
-        self.assertEqual(self.send(31, True).json(), {"success": True, "changed": True})
-        before = self.snapshot()
-        with patch.object(app.state.connection_manager, "broadcast") as broadcast:
-            for sequence in (30, 31):
-                response = self.send(sequence, False)
-                self.assertEqual(response.status_code, 409)
-                self.assertEqual(response.json(), {"detail": "Stale sensor sequence"})
-            self.assertEqual(self.send(31, True).json(), {"success": True, "changed": False})
-            broadcast.assert_not_called()
-        self.assertEqual(self.snapshot(), before)
+    def test_legacy_sequence_is_ignored_and_stored_value_is_preserved(self):
+        with self.sessions.begin() as db:
+            db.get(Sensor, self.sensor_id).last_sequence = 40
+        self.assertEqual(self.send(False).json(), {"success": True, "changed": False})
+        self.assertEqual(self.send(True, sequence=30).json(), {"success": True, "changed": True})
+        self.assertEqual(self.send(False, sequence=29).json(), {"success": True, "changed": True})
+        for value in (None, True, "unused", 0, -1, 9223372036854775808):
+            self.assertEqual(self.send(False, sequence=value).json(), {"success": True, "changed": False})
+        self.assertEqual(len(self.snapshot()[2]), 2)
         with self.sessions() as db:
             sensor = db.get(Sensor, self.sensor_id)
-            self.assertEqual(sensor.last_sequence, 31)
-            self.assertTrue(sensor.last_occupied)
+            self.assertEqual(sensor.last_sequence, 40)
+            self.assertFalse(sensor.last_occupied)
+            self.assertIsNotNone(sensor.last_seen_at)
 
-    def test_concurrent_identical_sequence_commits_once(self):
+    def test_concurrent_identical_state_commits_once_without_sequence(self):
         with ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _: self.send(1, True), range(2)))
+            results = list(pool.map(lambda _: self.send(True), range(2)))
         self.assertEqual([result.status_code for result in results], [200, 200])
         self.assertEqual(sorted(result.json()["changed"] for result in results), [False, True])
         self.assertEqual(len(self.snapshot()[2]), 1)
 
-    def test_rate_limit_does_not_consume_sequence_or_write_or_broadcast(self):
+    def test_rate_limit_does_not_refresh_observation_or_write_or_broadcast(self):
         self.settings.sensor_rate_burst = 1
         self.settings.sensor_rate_per_second = 0.1
-        self.assertEqual(self.send(1, False).status_code, 200)
+        self.assertEqual(self.send(False).status_code, 200)
         before = self.snapshot()
+        with self.sessions() as db:
+            seen_before = db.get(Sensor, self.sensor_id).last_seen_at
         with patch.object(app.state.connection_manager, "broadcast") as broadcast:
-            response = self.send(2, True)
+            response = self.send(True)
             self.assertEqual(response.status_code, 429)
             self.assertGreaterEqual(int(response.headers["retry-after"]), 1)
             broadcast.assert_not_called()
         self.assertEqual(self.snapshot(), before)
         with self.sessions() as db:
-            self.assertEqual(db.get(Sensor, self.sensor_id).last_sequence, 1)
+            self.assertEqual(db.get(Sensor, self.sensor_id).last_seen_at, seen_before)
 
     def test_global_limit_applies_across_device_keys(self):
         self.settings.sensor_global_burst = 1
         self.settings.sensor_global_rate_per_second = 0.1
-        self.assertEqual(self.send(1, False).status_code, 200)
+        self.assertEqual(self.send(False).status_code, 200)
         # This configured but unregistered ID must be throttled before DB lookup.
-        self.assertEqual(self.send(1, True, device="other-sensor").status_code, 429)
+        self.assertEqual(self.send(True, device="other-sensor").status_code, 429)
 
-    def test_minimum_state_interval_rejects_flip_without_consuming_sequence(self):
+    def test_minimum_state_interval_rejects_flip_without_refreshing_observation(self):
         self.settings.sensor_min_state_interval_seconds = 10
-        self.assertEqual(self.send(1, True).status_code, 200)
+        self.assertEqual(self.send(True).status_code, 200)
         before = self.snapshot()
-        self.assertEqual(self.send(2, False).status_code, 429)
+        with self.sessions() as db:
+            seen_before = db.get(Sensor, self.sensor_id).last_seen_at
+        self.assertEqual(self.send(False).status_code, 429)
         self.assertEqual(self.snapshot(), before)
         with self.sessions.begin() as db:
             sensor = db.get(Sensor, self.sensor_id)
-            self.assertEqual(sensor.last_sequence, 1)
+            self.assertEqual(sensor.last_seen_at, seen_before)
             db.get(Stall, self.stall_id).updated_at -= timedelta(seconds=11)
-        self.assertEqual(self.send(2, False).status_code, 200)
+        self.assertEqual(self.send(False).status_code, 200)
 
     def test_special_json_and_invalid_identifiers_return_safe_422_without_writes(self):
         before = self.snapshot()
         for occupied in (float("nan"), float("inf"), float("-inf"), "\ud800"):
-            payload = json.dumps({"device_id": "test-sensor", "occupied": occupied, "sequence": 1})
+            payload = json.dumps({"device_id": "test-sensor", "occupied": occupied})
             response = self.client.post("/api/sensors/stall", content=payload, headers={"Content-Type": "application/json"})
             self.assertEqual(response.status_code, 422)
             self.assertTrue(all(set(error) == {"loc", "msg", "type"} for error in response.json()["detail"]))
         for device in ("\u0000", "\ud800", " test-sensor ", "a" * 129):
             response = self.client.post("/api/sensors/stall", content=json.dumps({
-                "device_id": device, "occupied": True, "sequence": 1,
+                "device_id": device, "occupied": True,
             }), headers={"Content-Type": "application/json"})
             self.assertEqual(response.status_code, 422)
-        for sequence in (None, True, "1", 1.0, 0, -1, 9223372036854775808):
-            self.assertEqual(self.send(sequence, True).status_code, 422)
         self.assertEqual(self.snapshot(), before)
 
     def test_retention_is_bounded_and_keeps_recent_and_boundary_events(self):

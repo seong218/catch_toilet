@@ -5,8 +5,6 @@ the application's development data is never used or changed.
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from collections import defaultdict
-from itertools import count
 from datetime import datetime, timezone
 from pathlib import Path
 from secrets import token_urlsafe
@@ -66,7 +64,6 @@ class SensorAPIFixture(unittest.TestCase):
                 "missing", "TEST-SENSOR",
             )
         }
-        self.sequences = defaultdict(lambda: count(1))
         self.settings = get_settings().model_copy(update={
             "enable_statistics_collection": False,
             "sensor_rate_burst": 1000, "sensor_rate_per_second": 1000,
@@ -106,7 +103,7 @@ class SensorAPIFixture(unittest.TestCase):
 
     def post(self, occupied, device_id="test-sensor", expected_status=200):
         response = self.client.post(
-            "/api/sensors/stall", json={"device_id": device_id, "occupied": occupied, "sequence": next(self.sequences[device_id])},
+            "/api/sensors/stall", json={"device_id": device_id, "occupied": occupied},
             headers=self.auth_headers(device_id),
         )
         self.assertEqual(response.status_code, expected_status, response.text)
@@ -122,13 +119,13 @@ class SensorAPITests(SensorAPIFixture):
             with self.sessions() as db:
                 first = db.get(Sensor, self.sensor_id).last_seen_at
             self.assertIsNotNone(first)
-            # Exact retransmission is not a new observation.
+            # Every accepted report refreshes the last observation time.
             replay = self.client.post("/api/sensors/stall", json={
-                "device_id": "test-sensor", "occupied": False, "sequence": 1,
+                "device_id": "test-sensor", "occupied": False,
             })
             self.assertEqual(replay.status_code, 200)
             with self.sessions() as db:
-                self.assertEqual(db.get(Sensor, self.sensor_id).last_seen_at, first)
+                self.assertGreater(db.get(Sensor, self.sensor_id).last_seen_at, first)
             self.assertFalse(self.post(False)["changed"])
             with self.sessions() as db:
                 self.assertGreater(db.get(Sensor, self.sensor_id).last_seen_at, first)
@@ -143,7 +140,7 @@ class SensorAPITests(SensorAPIFixture):
                 self.auth_headers("other-sensor"),
             ):
                 response = self.client.post(
-                    "/api/sensors/stall", json={"device_id": "test-sensor", "occupied": True, "sequence": 1},
+                    "/api/sensors/stall", json={"device_id": "test-sensor", "occupied": True},
                     headers=headers,
                 )
                 self.assertEqual(response.status_code, 401)
@@ -229,8 +226,6 @@ class SensorAPITests(SensorAPIFixture):
         before = self.snapshot()
         for payload in payloads:
             with self.subTest(payload=payload):
-                if isinstance(payload, dict):
-                    payload["sequence"] = 1
                 response = self.client.post("/api/sensors/stall", json=payload)
                 self.assertEqual(response.status_code, 422, response.text)
                 self.assertIsInstance(response.json()["detail"], list)
@@ -292,7 +287,7 @@ class SensorAPITests(SensorAPIFixture):
         def send(device_id):
             ready.wait(timeout=5)
             return self.client.post(
-                "/api/sensors/stall", json={"device_id": device_id, "occupied": True, "sequence": 1},
+                "/api/sensors/stall", json={"device_id": device_id, "occupied": True},
                 headers=self.auth_headers(device_id),
             )
 
@@ -309,7 +304,8 @@ class SensorAPITests(SensorAPIFixture):
         spec = self.client.get("/openapi.json").json()
         self.assertEqual(set(spec["paths"]["/api/sensors/stall"]), {"post"})
         schemas = spec["components"]["schemas"]
-        self.assertEqual(set(schemas["SensorUpdateRequest"]["required"]), {"device_id", "occupied", "sequence"})
+        self.assertEqual(set(schemas["SensorUpdateRequest"]["required"]), {"device_id", "occupied"})
+        self.assertEqual(set(schemas["SensorUpdateRequest"]["properties"]), {"device_id", "occupied"})
         response = schemas["SensorUpdateResponse"]
         self.assertEqual(set(response["properties"]), {"success", "changed"})
         self.assertEqual(set(response["required"]), {"success", "changed"})

@@ -56,12 +56,13 @@ occupied/has_bidet의 null은 false와 다르며 unknown_stalls를 반영한다.
 | GET | `/api/restrooms` | `latitude`, `longitude` 함께 생략 가능, 선택 gender. 화장실 배열 |
 | GET | `/api/restrooms/{restroom_id}` | 선택 좌표와 `stalls`가 포함된 상세 |
 | GET | `/api/restrooms/recommend` | `latitude`, `longitude` 필수, 선택 gender, `bidet_required=false` 기본값. 추천 한 곳 |
-| POST | `/api/sensors/stall` | 기기별 Bearer 인증 필수. `{"device_id":"stall-a-01","occupied":true,"sequence":1}` → `{"success":true,"changed":true}` |
+| POST | `/api/sensors/stall` | 기기별 Bearer 인증 필수. `{"device_id":"stall-a-01","occupied":true}` → `{"success":true,"changed":true}` |
 | WS | `/ws` | 별도 구독 메시지 없이 이후 `stall.updated` 수신 |
 
 데이터 계약은 [docs/api.md](../docs/api.md)다. 조회·WebSocket은 로그인·인증 헤더가 필요 없다.
 센서 쓰기에만 `Authorization: Bearer <해당 device_id의 키>`가 필수다. 이 키를 Flutter 앱에 넣지 않는다.
-IoT는 재부팅에도 유지되는 단조 증가 `sequence`를 보내야 한다. `409`는 오래된 번호, `429`는 속도 제한이다.
+IoT는 `device_id`, `occupied`만 보낸다. 구형 `sequence` 필드는 무시한다.
+`409`는 센서 비활성·잘못된 연결 관계, `429`는 속도 제한이다. 정상 보고마다 수신 시각을 갱신한다.
 키 설정·교체·철회는 [Backend 안내](README.md#기기별-키-설정과-교체)를 따른다.
 
 - 목록·상세의 `distance`는 좌표 생략 시 `null`, 추천의 `distance`는 항상 숫자다.

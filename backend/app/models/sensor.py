@@ -50,6 +50,8 @@ class Sensor(Base):
     stall_id: Mapped[int] = mapped_column(index=True)
     sensor_type: Mapped[str] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(server_default=true())
+    # Legacy stored value retained for DB compatibility; no longer read/written
+    # by sensor ingestion or observation-quality checks.
     last_sequence: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
     last_occupied: Mapped[bool] = mapped_column(server_default=false())
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

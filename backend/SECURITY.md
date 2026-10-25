@@ -46,18 +46,18 @@ PY
 
 - `SENSOR_API_KEYS`는 `device_id`별로 다른 난수 키를 담은 JSON 객체다. 키가 없으면 쓰기를 차단한다.
 - 센서 요청에 `Authorization: Bearer <해당 기기의 키>`를 보낸다. Flutter에는 이 키를 배포하지 않는다.
-- 본문은 `{"device_id":"stall-a-01","occupied":true,"sequence":1}`이다. 입력 ID는 ASCII 영숫자와 `._:-`만 허용하며 영숫자로 시작하고 최대 128자다.
-- `sequence`는 1~9223372036854775807의 정수이며 기기별로 증가시킨다. 기기 재부팅 후에도 값을 보존해야 한다.
-- 서버는 마지막 번호와 해당 상태를 DB에 원자적으로 저장한다. 작은 번호·같은 번호의 다른 상태는 409다.
-  같은 번호·같은 상태의 재시도는 200/changed=false이며 상태·이벤트·방송을 되풀이하지 않는다.
-- 새 번호라도 같은 상태면 칸과 이벤트는 갱신하지 않는다. 승인된 번호만 전진한다. 429는 번호를 소비하지 않는다.
-- 키를 교체해도 번호는 초기화하지 않는다. 기기를 교체할 때는 운영자가 기존 번호보다 높은 시작 번호를 전달한다.
+- 본문은 `{"device_id":"stall-a-01","occupied":true}`이다. 입력 ID는 ASCII 영숫자와 `._:-`만 허용하며 영숫자로 시작하고 최대 128자다.
+- `sequence`는 API에서 제거했다. 기존 클라이언트가 보내면 무시한다. 기기는 순번을 생성·보존할 필요가 없다.
+- 요청이 처리되는 순서대로 상태를 반영한다. 인증된 과거 요청의 재전송이나 요청 순서 뒤집기는 구분하지 않는다.
+- 현재 상태와 같으면 200/changed=false이며 칸·이벤트·방송은 바뀌지 않는다. 정상 요청마다 마지막 보고 상태와
+  `last_seen_at`을 갱신한다. 429 등 거부된 요청은 이 정보도 갱신하지 않는다.
+- DB의 기존 `last_sequence` 값은 호환성을 위해 보존하되 API와 통계 판단에서는 사용하지 않는다.
 - 기본 제한은 기기당 초당 0.2회(5초당 1회), burst 2회, 전체 초당 5회, burst 10회다.
   `SENSOR_RATE_PER_SECOND/BURST`, `SENSOR_GLOBAL_RATE_PER_SECOND/BURST`로 조정한다.
 - 같은 칸의 실제 상태 변경은 `SENSOR_MIN_STATE_INTERVAL_SECONDS`(기본 1초) 이상 간격이 필요하다.
-  429의 `Retry-After`초 뒤 같은 요청을 재시도한다. 기기의 debounce도 유지한다.
+  429의 `Retry-After`초 뒤 센서의 최신 상태를 보고한다. 기기의 debounce도 유지한다.
 - 요청 제한은 인증 후 DB 접근 전에 적용한다. 단일 worker의 메모리 제한이므로 재시작 시 bucket만 초기화된다.
-  DB 순번은 유지된다. 다중 worker/replica 배포에는 공유 limiter와 방송 계층이 필요하다.
+  다중 worker/replica 배포에는 공유 limiter와 방송 계층이 필요하다.
 - API 키는 전송 서명이 아니다. 로컬 개발 HTTP 이외에는 HTTPS를 사용한다. 키가 유출되면 폐기·교체한다.
 
 ## 검증과 WebSocket
@@ -83,9 +83,9 @@ created_at 인덱스로 조회하며 DB statement timeout을 적용한다. 경�
 
 ## 검증 범위
 
-임시 PostgreSQL 스키마에서 인증, 순번·동시 중복 처리, 상태 변경 간격, 요청 제한,
+임시 PostgreSQL 스키마에서 인증, 순번 없는 요청·동시 중복 처리, 상태 변경 간격, 요청 제한,
 좌표·JSON 검증, WebSocket Origin·전체/IP 한도와 슬롯 반환, 보관기간·배치 경계를 검사한다.
-Flutter의 조회 응답·WebSocket 이벤트 필드는 유지한다. IoT 송신부는 Bearer 헤더와 영속 sequence 대응이 필요하다.
+Flutter의 조회 응답·WebSocket 이벤트 필드는 유지한다. IoT 송신부는 Bearer 헤더와 현재 상태만 보내면 된다.
 
 2026-10-24 검증: 전체 133개 테스트 통과(센서 인증 작업부터 합산 회귀 suite 3회 이내).
 Docker 재빌드·기존 DB의 `0002 → 0003` 적용·제한 계정 실행·healthcheck를 확인했다.

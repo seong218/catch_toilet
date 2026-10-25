@@ -47,7 +47,8 @@ Restroom의 `building`, `latitude`, `longitude`, `location_source`를 등록하�
   여자 비데의 미확인 값 때문에 나중에 현장 확인한 칸별 값을 지우지 않는다.
 - 이전 개발용 3곳은 `is_active=false`, 해당 센서는 `active=false`로 보관한다. 기존 12칸과 이벤트를 삭제하지 않는다.
 - 센서 ID: `dimigo-main-{m|f}-{b1|1|2|3}-{01..칸수}`. 예: `dimigo-main-m-1-02`는 남자 1층 2번 비데 칸이다.
-- 기기별 Bearer 키와 재부팅에도 유지되는 단조 증가 `sequence`가 필요하다. 키는 서버 `.env`와 해당 기기에만 보관한다.
+- 기기별 Bearer 키와 본문의 `device_id`, `occupied`가 필요하다. `sequence`는 보내지 않아도 된다.
+  키는 서버 `.env`와 해당 기기 또는 USB 중계 PC에만 보관한다.
   현재 PC에서는 39개 새 센서 키를 Git에서 제외된 `backend/.env`에 생성했다. 다른 PC에서는 별도로 발급해야 한다.
   상세 인증·재시도·속도 제한 규칙은 [보안 인계](../backend/SECURITY.md)를 따른다.
 - 시설 seed는 사용 이벤트나 과거 통계를 생성하지 않는다. 실제 Arduino 연결 및 통계 정기 수집은 별도 작업이다.
