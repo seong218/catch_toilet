@@ -18,11 +18,13 @@ API 경로·응답 형식·추천 계산은 변경하지 않았다. 새 패키�
 
 - 카카오에 등록된 Android applicationId/namespace와 iOS Bundle ID
 - Docker Compose 프로젝트 이름, 기존 PostgreSQL 볼륨과 계정 이름
-- GitHub 저장소 이름과 원격 주소
 
 이 식별자를 바꾸려면 카카오 등록·앱 서명·DB 데이터 이관 등 별도 이전 작업이 필요하다.
 카카오 콘솔의 앱 관리 이름도 이번 코드 변경으로 자동 변경되지 않는다.
 기존 플랫폼 폴더는 그대로 사용한다. 부트스트랩으로 새로 생성한 플랫폼은 새 기본 식별자를 쓰므로 카카오 등록을 확인해야 한다.
+
+GitHub가 안내한 현재 저장소 주소는 `https://github.com/seong218/catch_toilet.git`이다.
+로컬 `origin`도 이 주소를 사용하며, 이름 수정은 `backend-dev` 브랜치에 반영했다.
 
 ## 실행 및 검증
 
