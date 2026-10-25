@@ -6,6 +6,18 @@
     <string>현재 위치에서 디미고 화장실까지의 거리를 계산하기 위해 위치를 사용합니다.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>같은 네트워크의 화장실 서버에 연결해 빈칸 정보를 확인합니다.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <!-- Host supplied by the ignored Flutter/Local.xcconfig file. -->
+            <key>CT_HTTP_SERVER_HOST</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
+        </dict>
+    </dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

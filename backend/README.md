@@ -7,6 +7,9 @@ Python 3.13, FastAPI, SQLAlchemy 2, psycopg 3, Alembic을 사용한다.
 
 현재 디미고 본관 8곳·39칸과 GPS 계약·실행은 [디미고 인계](../docs/DIMIGO_GPS.md)를 따른다.
 
+별도 서버 배포와 실기기 연결은 [서버 배포 안내](../docs/SERVER_DEPLOYMENT.md)를 따른다.
+실제 접속 주소·SSH 별칭·서버 내부 경로는 저장소에 기록하지 않는다.
+
 ## PC 상태 시뮬레이션
 
 현재 본관 39칸을 랜덤·직접 지정하여 조회·추천·WebSocket 전체 흐름을 확인할 수 있다.
