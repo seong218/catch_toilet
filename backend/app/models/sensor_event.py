@@ -18,6 +18,7 @@ class SensorEvent(Base):
         CheckConstraint("id > 0", name="ck_sensor_events_id_positive"),
         CheckConstraint("event_type ~ '[^[:space:]]'", name="ck_sensor_events_type_not_blank"),
         Index("ix_sensor_events_sensor_id_created_at", "sensor_id", "created_at"),
+        Index("ix_sensor_events_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

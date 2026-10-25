@@ -16,13 +16,15 @@ class StallTile extends StatelessWidget {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: stall.occupied
+              color: stall.occupied != false
                   ? const Color(0xFFF1EDE7)
                   : const Color(0xFFDDEFE2),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
-              stall.occupied
+              stall.occupied == null
+                  ? Icons.help_outline_rounded
+                  : stall.occupied == true
                   ? Icons.lock_outline_rounded
                   : Icons.check_circle_outline_rounded,
             ),
@@ -37,12 +39,21 @@ class StallTile extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 2),
-                Text(stall.occupied ? '사용 중' : '사용 가능'),
-                if (stall.hasBidet) const Text('비데 있음'),
+                Text(
+                  stall.occupied == null
+                      ? '상태 미확인'
+                      : stall.occupied == true
+                      ? '사용 중'
+                      : '사용 가능',
+                ),
+                if (stall.hasBidet == null) const Text('칸별 비데 위치 미확인'),
+                if (stall.isAccessible == true) const Text('장애인 이용 가능 칸'),
+                if (stall.hasBidet == true) const Text('비데 있음'),
+                if (stall.hasBidet == false) const Text('비데 없음'),
               ],
             ),
           ),
-          if (stall.hasBidet)
+          if (stall.hasBidet == true)
             const Tooltip(
               message: '비데 있음',
               child: Icon(Icons.water_drop_outlined),

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, UniqueConstraint, false, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, UniqueConstraint, false, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -28,8 +28,9 @@ class Stall(Base):
         ForeignKey("restrooms.id", name="fk_stalls_restroom", ondelete="RESTRICT")
     )
     stall_number: Mapped[int]
-    occupied: Mapped[bool] = mapped_column(server_default=false())
-    has_bidet: Mapped[bool] = mapped_column(server_default=false())
+    occupied: Mapped[bool | None] = mapped_column(Boolean().evaluates_none(), server_default=false())
+    has_bidet: Mapped[bool | None] = mapped_column(Boolean().evaluates_none(), server_default=false())
+    is_accessible: Mapped[bool] = mapped_column(server_default=false())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

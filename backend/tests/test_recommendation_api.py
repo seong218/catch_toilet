@@ -130,7 +130,7 @@ class RecommendationAPITests(restroom_tests.RestroomAPIFixture):
         self.assertEqual((result["id"], result["distance"]), (negative.id, 0.0))
 
     def test_required_finite_coordinates_and_boolean_validation(self):
-        for params, missing in (({}, {"x", "y"}), ({"x": 0}, {"y"}), ({"y": 0}, {"x"})):
+        for params, missing in (({}, {"latitude"}), ({"x": 0}, {"y"}), ({"y": 0}, {"x"})):
             body = self.get_json(PATH, 422, params=params)
             self.assertEqual({error["loc"][-1] for error in body["detail"]}, missing)
         for axis in ("x", "y"):
@@ -169,8 +169,10 @@ class RecommendationAPITests(restroom_tests.RestroomAPIFixture):
     def test_openapi_recommendation_contract_and_required_inputs(self):
         specification = self.get_json("/openapi.json")
         parameters = {parameter["name"]: parameter for parameter in specification["paths"][PATH]["get"]["parameters"]}
-        self.assertTrue(parameters["x"]["required"])
-        self.assertTrue(parameters["y"]["required"])
+        self.assertFalse(parameters["x"]["required"])
+        self.assertIn("latitude", parameters)
+        self.assertFalse(parameters["y"]["required"])
+        self.assertIn("longitude", parameters)
         self.assertFalse(parameters["bidet_required"]["required"])
         self.assertIs(parameters["bidet_required"]["schema"]["default"], False)
         schema = specification["components"]["schemas"]["Recommendation"]

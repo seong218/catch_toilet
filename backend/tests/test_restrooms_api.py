@@ -21,8 +21,9 @@ from app.seed import seed_development_data
 ROOM_FIELDS = {
     "id", "name", "building", "floor", "x", "y", "distance",
     "total_stalls", "available_stalls", "available_bidet_stalls",
+    "latitude", "longitude", "gender", "location_source", "bidet_stalls", "accessible_stalls", "unknown_stalls", "simulated_stalls",
 }
-STALL_FIELDS = {"id", "stall_number", "occupied", "has_bidet"}
+STALL_FIELDS = {"id", "stall_number", "occupied", "has_bidet", "is_accessible", "is_simulated"}
 
 
 class RestroomAPIFixture(unittest.TestCase):
@@ -193,13 +194,13 @@ class RestroomAPITests(RestroomAPIFixture):
         specification = self.get_json("/openapi.json")
         self.assertEqual(set(specification["paths"]), {
             "/api/health", "/api/restrooms", "/api/restrooms/{restroom_id}", "/api/sensors/stall",
-            "/api/restrooms/recommend",
+            "/api/restrooms/recommend", "/api/simulation/stalls", "/api/simulation/reset",
         })
         for name, fields, nullable in (
             ("HealthResponse", {"status"}, set()),
-            ("Restroom", ROOM_FIELDS, {"distance"}),
-            ("RestroomDetail", ROOM_FIELDS | {"stalls"}, {"distance"}),
-            ("Stall", STALL_FIELDS, set()),
+            ("Restroom", ROOM_FIELDS, {"distance", "latitude", "longitude", "bidet_stalls"}),
+            ("RestroomDetail", ROOM_FIELDS | {"stalls"}, {"distance", "latitude", "longitude", "bidet_stalls"}),
+            ("Stall", STALL_FIELDS, {"occupied", "has_bidet"}),
         ):
             schema = specification["components"]["schemas"][name]
             self.assertEqual(set(schema["properties"]), fields)

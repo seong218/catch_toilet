@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.exceptions import RequestValidationError
@@ -11,10 +11,12 @@ from app.db import get_db
 from app.repositories import restrooms
 from app.schemas.recommendation import Recommendation
 from app.schemas.restroom import Restroom, RestroomDetail
-from app.services.location import distance_to
+from app.services.location import GPSLocation, MAX_COORDINATE, restroom_distance
 from app.services.recommendation import (
     NoAvailableBidetStallsError,
     NoRestroomsFoundError,
+    LiveAvailabilityUnavailableError,
+    RestroomLocationUnavailableError,
     recommend_restroom,
 )
 
@@ -23,9 +25,18 @@ router = APIRouter()
 
 
 def optional_coordinates(
-    x: Annotated[FiniteFloat | None, Query()] = None,
-    y: Annotated[FiniteFloat | None, Query()] = None,
-) -> tuple[float, float] | None:
+    x: Annotated[FiniteFloat | None, Query(ge=-MAX_COORDINATE, le=MAX_COORDINATE)] = None,
+    y: Annotated[FiniteFloat | None, Query(ge=-MAX_COORDINATE, le=MAX_COORDINATE)] = None,
+    latitude: Annotated[FiniteFloat | None, Query(ge=-90, le=90)] = None,
+    longitude: Annotated[FiniteFloat | None, Query(ge=-180, le=180)] = None,
+) -> GPSLocation | tuple[float, float] | None:
+    if latitude is not None or longitude is not None:
+        if x is not None or y is not None:
+            raise RequestValidationError([{"type": "value_error", "loc": ("query", "latitude"), "msg": "Do not mix GPS and legacy coordinates"}])
+        if latitude is None or longitude is None:
+            missing = "latitude" if latitude is None else "longitude"
+            raise RequestValidationError([{"type": "missing", "loc": ("query", missing), "msg": "Field required"}])
+        return GPSLocation(latitude, longitude)
     if (x is None) != (y is None):
         missing = "x" if x is None else "y"
         raise RequestValidationError([
@@ -35,21 +46,21 @@ def optional_coordinates(
 
 
 Database = Annotated[Session, Depends(get_db)]
-Coordinates = Annotated[tuple[float, float] | None, Depends(optional_coordinates)]
+Coordinates = Annotated[GPSLocation | tuple[float, float] | None, Depends(optional_coordinates)]
 
 
 @router.get("", response_model=list[Restroom], responses={503: {"description": "Database unavailable"}})
-def list_restrooms(db: Database, coordinates: Coordinates) -> list[Restroom]:
+def list_restrooms(db: Database, coordinates: Coordinates, gender: Literal["male", "female"] | None = None) -> list[Restroom]:
     try:
-        rows = restrooms.list_restrooms(db)
+        rows = restrooms.list_restrooms(db, gender=gender)
     except SQLAlchemyError:
         logger.warning("Restroom list could not access PostgreSQL")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable"
         ) from None
-    result = [Restroom(**row, distance=distance_to(coordinates, row["x"], row["y"])) for row in rows]
+    result = [Restroom(**row, distance=restroom_distance(coordinates, row)) for row in rows]
     if coordinates is not None:
-        result.sort(key=lambda room: (room.distance, room.id))
+        result.sort(key=lambda room: (room.distance if room.distance is not None else float("inf"), room.id))
     return result
 
 
@@ -64,12 +75,18 @@ def list_restrooms(db: Database, coordinates: Coordinates) -> list[Restroom]:
 )
 def get_recommendation(
     db: Database,
-    x: Annotated[FiniteFloat, Query()],
-    y: Annotated[FiniteFloat, Query()],
+    coordinates: Coordinates,
     bidet_required: Annotated[bool, Query()] = False,
+    gender: Literal["male", "female"] | None = None,
 ) -> Recommendation:
+    if coordinates is None:
+        raise RequestValidationError([{"type": "missing", "loc": ("query", "latitude"), "msg": "Latitude and longitude are required"}])
     try:
-        return recommend_restroom(db, (x, y), bidet_required=bidet_required)
+        return recommend_restroom(db, coordinates, bidet_required=bidet_required, gender=gender)
+    except LiveAvailabilityUnavailableError:
+        raise HTTPException(status_code=404, detail="Live availability unavailable") from None
+    except RestroomLocationUnavailableError:
+        raise HTTPException(status_code=404, detail="Restroom location unavailable") from None
     except NoRestroomsFoundError:
         raise HTTPException(status_code=404, detail="No restrooms found") from None
     except NoAvailableBidetStallsError:
@@ -96,4 +113,4 @@ def get_restroom(
         ) from None
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restroom not found")
-    return RestroomDetail(**row, distance=distance_to(coordinates, row["x"], row["y"]))
+    return RestroomDetail(**row, distance=restroom_distance(coordinates, row))

@@ -1,14 +1,15 @@
-"""Insert development fixtures with `python -m app.seed` after migrations."""
+"""Sync confirmed Dimigo facilities without fabricating live sensor states."""
 
 import sys
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, engine
 from app.models import Restroom, Sensor, Stall
 from app.seed_data import DEVELOPMENT_RESTROOMS
+from app.dimigo_data import DIMIGO_LATITUDE, DIMIGO_LONGITUDE, DIMIGO_RESTROOMS
 
 # Stable PostgreSQL transaction lock shared by all invocations of this seed.
 SEED_LOCK_KEY = 0x43545F53454544  # CT_SEED
@@ -72,10 +73,64 @@ def seed_development_data(db: Session) -> dict[str, int]:
     return created
 
 
+def seed_dimigo_data(db: Session) -> dict[str, int]:
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": SEED_LOCK_KEY})
+    created = {"restrooms": 0, "stalls": 0, "sensors": 0}
+    for fixture in DIMIGO_RESTROOMS:
+        room = db.scalar(select(Restroom).where(Restroom.data_key == fixture.key))
+        if room is None:
+            room = Restroom(name=fixture.name, building="본관", floor=fixture.floor,
+                            x=0, y=0, latitude=DIMIGO_LATITUDE, longitude=DIMIGO_LONGITUDE,
+                            gender=fixture.gender, location_source="school_reference",
+                            bidet_stalls=fixture.bidets, accessible_stalls=fixture.accessible,
+                            data_key=fixture.key, is_active=True)
+            db.add(room)
+            db.flush()
+            created["restrooms"] += 1
+        room.accessible_stalls = fixture.accessible
+        if fixture.bidets is not None:
+            room.bidet_stalls = fixture.bidets
+        for number in range(1, fixture.total + 1):
+            stall = db.scalar(select(Stall).where(Stall.restroom_id == room.id, Stall.stall_number == number))
+            has_bidet = fixture.stall_has_bidet(number)
+            is_accessible = number <= fixture.accessible
+            if stall is None:
+                stall = Stall(restroom_id=room.id, stall_number=number, occupied=None,
+                              has_bidet=has_bidet, is_accessible=is_accessible)
+                db.add(stall)
+                db.flush()
+                created["stalls"] += 1
+            else:
+                # Sync confirmed facilities only; preserve observations,
+                # their timestamps and any later-confirmed female bidets.
+                facilities = {"is_accessible": is_accessible}
+                if has_bidet is not None:
+                    facilities["has_bidet"] = has_bidet
+                if any(getattr(stall, key) != value for key, value in facilities.items()):
+                    db.execute(update(Stall).where(Stall.id == stall.id).values(
+                        **facilities, updated_at=Stall.updated_at,
+                    ))
+            device_id = f"{fixture.key}-{number:02d}"
+            sensor = db.scalar(select(Sensor).where(Sensor.device_id == device_id))
+            if sensor is None:
+                db.add(Sensor(device_id=device_id, restroom_id=room.id, stall_id=stall.id,
+                              sensor_type="SW-520D", active=True))
+                created["sensors"] += 1
+            elif sensor.stall_id != stall.id or sensor.restroom_id != room.id:
+                raise SeedConflictError("디미고 센서 매핑이 기존 데이터와 충돌합니다")
+    # Archive only the known legacy fixtures, preserving their event history.
+    for fixture in DEVELOPMENT_RESTROOMS:
+        for room in db.scalars(select(Restroom).where(Restroom.data_key.is_(None), Restroom.name == fixture.name)):
+            room.is_active = False
+            for sensor in room.sensors:
+                sensor.active = False
+    return created
+
+
 def main() -> int:
     try:
         with SessionLocal.begin() as db:
-            created = seed_development_data(db)
+            created = seed_dimigo_data(db)
     except SeedConflictError as error:
         print(f"Seed 중단: {error} 변경사항을 모두 롤백했습니다.", file=sys.stderr)
         return 1
@@ -91,7 +146,7 @@ def main() -> int:
         engine.dispose()
 
     print(
-        "개발용 테스트 seed 완료: "
+        "디미고 시설 seed 완료 (실시간 상태 미확인): "
         f"신규 화장실 {created['restrooms']}개, "
         f"Stall {created['stalls']}개, Sensor {created['sensors']}개. "
         "기존 데이터는 유지했습니다."

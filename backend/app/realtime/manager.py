@@ -13,16 +13,21 @@ logger = logging.getLogger(__name__)
 class _Connection:
     queue: asyncio.Queue[str]
     sender: asyncio.Task[None]
+    ip: str
 
 
 class ConnectionManager:
     """One event loop/process; each socket has an independent bounded sender."""
 
-    def __init__(self, *, queue_size: int = 64, send_timeout: float = 2.0):
+    def __init__(self, *, queue_size: int = 64, send_timeout: float = 2.0,
+                 max_connections: int = 100, max_per_ip: int = 10):
         self._queue_size = queue_size
         self._send_timeout = send_timeout
         self._connections: dict[WebSocket, _Connection] = {}
         self._tasks: set[asyncio.Task[None]] = set()
+        self._max_connections = max_connections
+        self._max_per_ip = max_per_ip
+        self._slots: dict[WebSocket, str] = {}
         # Hold across transaction + enqueue to preserve commit/snapshot order.
         # Multiple workers/replicas require a shared ordered message broker.
         self.update_lock = asyncio.Lock()
@@ -36,11 +41,25 @@ class ConnectionManager:
         task.add_done_callback(self._tasks.discard)
         return task
 
-    async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
-        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._queue_size)
-        sender = self._track(asyncio.create_task(self._send(websocket, queue)))
-        self._connections[websocket] = _Connection(queue, sender)
+    async def connect(self, websocket: WebSocket) -> bool:
+        client = getattr(websocket, "client", None)
+        ip = client.host if client else "unknown"
+        # Reserve before the first await; concurrent handshakes cannot exceed
+        # limits. Retain the slot until closing/failed handshakes finish.
+        if (len(self._slots) >= self._max_connections
+                or sum(value == ip for value in self._slots.values()) >= self._max_per_ip):
+            await websocket.close(code=1008)
+            return False
+        self._slots[websocket] = ip
+        try:
+            await asyncio.wait_for(websocket.accept(), timeout=self._send_timeout)
+            queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._queue_size)
+            sender = self._track(asyncio.create_task(self._send(websocket, queue)))
+            self._connections[websocket] = _Connection(queue, sender, ip)
+        except BaseException:
+            self._slots.pop(websocket, None)
+            raise
+        return True
 
     def broadcast(self, event: StallUpdated) -> None:
         # No network await: a slow client cannot delay HTTP or another sender.
@@ -82,6 +101,8 @@ class ConnectionManager:
         except Exception:
             # The peer/ASGI server may have already closed the socket.
             pass
+        finally:
+            self._slots.pop(websocket, None)
 
     async def disconnect(self, websocket: WebSocket, *, code: int = 1000) -> None:
         cleanup = self._drop(websocket, code=code)

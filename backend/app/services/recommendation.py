@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.repositories import restrooms
 from app.schemas.recommendation import Recommendation
-from app.services.location import distance_to
+from app.services.location import GPSLocation, restroom_distance
 from app.services.statistics import get_restrooms_statistics
 
 
@@ -15,20 +15,31 @@ class NoAvailableBidetStallsError(Exception):
     """Ordinary stalls are available, but no vacant bidet stall exists."""
 
 
+class LiveAvailabilityUnavailableError(Exception):
+    pass
+
+
+class RestroomLocationUnavailableError(Exception):
+    pass
+
+
 def recommend_restroom(
-    db: Session, origin: tuple[float, float], *, bidet_required: bool = False,
+    db: Session, origin: GPSLocation | tuple[float, float], *, bidet_required: bool = False,
+    gender: str | None = None,
 ) -> Recommendation:
     """Filter live availability, then compare statistics only within a near group.
 
     Partial history never penalizes an unknown candidate: if any near candidate
     lacks the relevant rate, keep the nearest. Full rooms only use distance.
     """
-    rows = restrooms.list_restrooms(db)
+    rows = restrooms.list_restrooms(db, gender=gender)
     if not rows:
         raise NoRestroomsFoundError
 
     available = [room for room in rows if room["available_stalls"] > 0]
     if not available:
+        if any(room["unknown_stalls"] > 0 for room in rows):
+            raise LiveAvailabilityUnavailableError
         # The all-full fallback applies even when a bidet was required.
         candidates = rows
     elif bidet_required:
@@ -38,10 +49,13 @@ def recommend_restroom(
     else:
         candidates = available
 
+    located = [(room, restroom_distance(origin, room)) for room in candidates]
     ranked = sorted(
-        ((room, distance_to(origin, room["x"], room["y"])) for room in candidates),
+        ((room, distance) for room, distance in located if distance is not None),
         key=lambda candidate: (candidate[1], candidate[0]["id"]),
     )
+    if not ranked:
+        raise RestroomLocationUnavailableError
     room, distance = ranked[0]
     tolerance = get_settings().recommendation_distance_tolerance
     nearby = (

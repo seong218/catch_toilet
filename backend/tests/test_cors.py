@@ -26,11 +26,12 @@ class CORSTests(unittest.TestCase):
                 response = self.client.options("/api/sensors/stall", headers={
                     "Origin": origin,
                     "Access-Control-Request-Method": "POST",
-                    "Access-Control-Request-Headers": "content-type",
+                    "Access-Control-Request-Headers": "content-type,authorization",
                 })
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.headers["access-control-allow-origin"], origin)
                 self.assertIn("POST", response.headers["access-control-allow-methods"])
+                self.assertIn("authorization", response.headers["access-control-allow-headers"].lower())
                 self.assertIn("Origin", response.headers["vary"])
                 self.assertNotIn("access-control-allow-credentials", response.headers)
 

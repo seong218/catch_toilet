@@ -11,7 +11,7 @@ import 'package:http/testing.dart';
 
 import 'models_test.dart' show restroomJson, detailJson;
 
-const location = UserLocation(label: '기준', x: -10, y: 20);
+const location = UserLocation(label: '기준', longitude: -10, latitude: 20);
 
 void main() {
   test(
@@ -26,8 +26,8 @@ void main() {
             if (request.url.path == '/api/health') {
               return http.Response('{"status":"ok"}', 200);
             }
-            expect(request.url.queryParameters['x'], '-10.0');
-            expect(request.url.queryParameters['y'], '20.0');
+            expect(request.url.queryParameters['longitude'], '-10.0');
+            expect(request.url.queryParameters['latitude'], '20.0');
             Object body;
             if (request.url.path.endsWith('/recommend')) {
               expect(request.url.queryParameters['bidet_required'], 'true');

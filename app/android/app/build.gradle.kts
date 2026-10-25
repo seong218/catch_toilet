@@ -30,6 +30,10 @@ android {
 
     buildTypes {
         release {
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // Demo builds use debug signing. Configure deployment signing before publishing.
             signingConfig = signingConfigs.getByName("debug")
         }

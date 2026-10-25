@@ -2,8 +2,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import SensorEvent
+from app.limits import SensorRateLimitError
 from app.repositories import restrooms, sensors
 from app.schemas.realtime import StallUpdated
+from app.simulation_state import current_overrides
 
 
 class SensorNotFoundError(Exception):
@@ -18,7 +20,13 @@ class InvalidSensorMappingError(Exception):
     """The sensor's restroom/stall mapping is missing or inconsistent."""
 
 
-def update_stall_occupancy(db: Session, device_id: str, occupied: bool) -> StallUpdated | None:
+class StaleSensorSequenceError(Exception):
+    """An older request, or conflicting reuse of a sequence number."""
+
+
+def update_stall_occupancy(
+    db: Session, device_id: str, occupied: bool, sequence: int, *, minimum_interval: float = 1,
+) -> StallUpdated | None:
     """Own one transaction; return only after commit succeeds.
 
     Call with a fresh session. Lock sensor then stall, compare the locked state,
@@ -32,6 +40,10 @@ def update_stall_occupancy(db: Session, device_id: str, occupied: bool) -> Stall
             raise SensorNotFoundError
         if not sensor.active:
             raise InactiveSensorError
+        if sequence < sensor.last_sequence or (sequence == sensor.last_sequence and occupied != sensor.last_occupied):
+            raise StaleSensorSequenceError
+        if sequence == sensor.last_sequence:
+            return None
         if sensor.stall_id is None or sensor.restroom_id is None:
             raise InvalidSensorMappingError
 
@@ -48,6 +60,9 @@ def update_stall_occupancy(db: Session, device_id: str, occupied: bool) -> Stall
             # Use processing time AFTER lock acquisition, not transaction start
             # time, so a queued request cannot backdate the previous update.
             changed_at = db.scalar(select(func.clock_timestamp()))
+            remaining = minimum_interval - (changed_at - stall.updated_at).total_seconds()
+            if stall.occupied is not None and remaining > 0:
+                raise SensorRateLimitError(remaining)
             stall.occupied = occupied
             stall.updated_at = changed_at
             db.flush()
@@ -58,13 +73,19 @@ def update_stall_occupancy(db: Session, device_id: str, occupied: bool) -> Stall
                 created_at=changed_at,
             ))
             summary = restrooms.get_restroom_summary(db, stall.restroom_id)
+            overrides = current_overrides()
             notification = StallUpdated(
                 restroom_id=stall.restroom_id,
                 stall_id=stall.id,
-                occupied=occupied,
+                occupied=overrides.get(stall.id, occupied),
+                is_simulated=stall.id in overrides,
+                simulated_stalls=summary["simulated_stalls"],
                 total_stalls=summary["total_stalls"],
                 available_stalls=summary["available_stalls"],
                 available_bidet_stalls=summary["available_bidet_stalls"],
+                unknown_stalls=summary["unknown_stalls"],
             )
+        sensor.last_sequence = sequence
+        sensor.last_occupied = occupied
         # A repeated state performs no UPDATE/INSERT and keeps updated_at intact.
     return notification

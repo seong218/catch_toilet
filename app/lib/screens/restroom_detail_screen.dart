@@ -2,12 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../models/stall.dart';
 import '../state/app_controller.dart';
-import '../utils/formatters.dart';
-import '../widgets/connection_status.dart';
 import '../widgets/message_card.dart';
-import '../widgets/stall_tile.dart';
+import '../widgets/restroom_detail_summary.dart';
+import '../widgets/restroom_floor_plan.dart';
 
 class RestroomDetailScreen extends StatefulWidget {
   const RestroomDetailScreen({
@@ -45,83 +43,135 @@ class _RestroomDetailScreenState extends State<RestroomDetailScreen> {
       final restroom = controller.details[widget.restroomId];
       final error = controller.detailErrors[widget.restroomId];
       final loading = controller.loadingDetails.contains(widget.restroomId);
-      final text = Theme.of(context).textTheme;
       return Scaffold(
-        appBar: AppBar(title: const Text('화장실 상세')),
+        backgroundColor: const Color(0xFFF2F7FF),
         body: SafeArea(
-          child: Center(
+          bottom: false,
+          child: Align(
+            alignment: Alignment.topCenter,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 720),
+              constraints: const BoxConstraints(maxWidth: 560),
               child: RefreshIndicator(
                 onRefresh: () => controller.loadDetail(widget.restroomId),
-                child: ListView(
-                  padding: const EdgeInsets.all(20),
+                child: SingleChildScrollView(
+                  key: PageStorageKey('restroom-detail-${widget.restroomId}'),
                   physics: const AlwaysScrollableScrollPhysics(),
-                  children: [
-                    ConnectionStatus(controller: controller),
-                    const SizedBox(height: 24),
-                    if (loading) ...[
-                      const LinearProgressIndicator(
-                        semanticsLabel: '상세 정보 불러오는 중',
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                    if (error != null) ...[
-                      MessageCard(
-                        message: error,
-                        onRetry: () => controller.loadDetail(widget.restroomId),
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                    if (restroom != null) ...[
-                      Text(restroom.name, style: text.headlineLarge),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${restroom.building} · ${floorLabel(restroom.floor)}',
-                      ),
-                      const SizedBox(height: 24),
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('현재 빈칸'),
-                              const SizedBox(height: 8),
-                              Text(
-                                '${restroom.availableStalls} / ${restroom.totalStalls}',
-                                style: text.headlineLarge,
-                              ),
-                              const SizedBox(height: 16),
-                              Wrap(
-                                spacing: 24,
-                                runSpacing: 12,
-                                children: [
-                                  Text(
-                                    '거리 ${distanceLabel(restroom.distance)}',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: 12),
+                      Stack(
+                        children: [
+                          Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 14),
+                            padding: const EdgeInsets.fromLTRB(22, 12, 22, 18),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(24),
+                            ),
+                            child: restroom != null
+                                ? Column(
+                                    children: [
+                                      RestroomFloorPlan(
+                                        stalls: restroom.stalls ?? const [],
+                                      ),
+                                      if (restroom.totalStalls > 0) ...[
+                                        const SizedBox(height: 12),
+                                        const RestroomPlanLegend(),
+                                      ],
+                                    ],
+                                  )
+                                : SizedBox(
+                                    height: 380,
+                                    child: Center(
+                                      child: error != null
+                                          ? MessageCard(
+                                              message: error,
+                                              onRetry: () =>
+                                                  controller.loadDetail(
+                                                    widget.restroomId,
+                                                  ),
+                                            )
+                                          : const CircularProgressIndicator(
+                                              semanticsLabel: '약도를 불러오는 중',
+                                            ),
+                                    ),
                                   ),
-                                  Text(
-                                    '비데 빈칸 ${restroom.availableBidetStalls}개',
-                                  ),
-                                ],
+                          ),
+                          Positioned(
+                            top: 12,
+                            left: 24,
+                            child: Material(
+                              color: Colors.white,
+                              elevation: 2,
+                              shadowColor: const Color(0x33000000),
+                              shape: const CircleBorder(),
+                              child: BackButton(color: Colors.black),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (restroom != null)
+                        Container(
+                          padding: EdgeInsets.fromLTRB(
+                            24,
+                            24,
+                            24,
+                            24 + MediaQuery.paddingOf(context).bottom,
+                          ),
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(32),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Color(0x14000000),
+                                blurRadius: 12,
+                                offset: Offset(0, -3),
                               ),
                             ],
                           ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              RestroomDetailSummary(restroom: restroom),
+                              const SizedBox(height: 18),
+                              const Text(
+                                '칸 정보 기준 약도예요. 실제 배치와 다를 수 있어요.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Color(0xFF8C929A),
+                                  fontSize: 11,
+                                ),
+                              ),
+                              if (loading) ...[
+                                const SizedBox(height: 14),
+                                const LinearProgressIndicator(
+                                  semanticsLabel: '상세 정보 업데이트 중',
+                                ),
+                              ],
+                              if (error != null) ...[
+                                const SizedBox(height: 14),
+                                const Text(
+                                  '업데이트하지 못했어요. 마지막으로 확인한 정보예요.',
+                                  style: TextStyle(
+                                    color: Color(0xFF797979),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                MessageCard(
+                                  message: error,
+                                  onRetry: () =>
+                                      controller.loadDetail(widget.restroomId),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 28),
-                      Text('칸 현황', style: text.titleLarge),
-                      const SizedBox(height: 6),
-                      const Text('사용 가능 여부와 비데를 함께 확인하세요.'),
-                      const SizedBox(height: 16),
-                      if (restroom.stalls?.isEmpty ?? true)
-                        const MessageCard(message: '아직 등록된 칸이 없어요.'),
-                      for (final stall in restroom.stalls ?? <Stall>[]) ...[
-                        StallTile(stall: stall),
-                        const SizedBox(height: 10),
-                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),

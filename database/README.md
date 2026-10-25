@@ -7,9 +7,9 @@
 - DB 데이터는 `catchy-toilet_postgres_data` named volume에 보관한다.
 - PostgreSQL 호스트 포트는 `127.0.0.1`에만 공개한다. Backend 컨테이너는 내부 네트워크의 `db:5432`로 연결한다.
 - DB 초기 사용자·DB·비밀번호는 빈 volume을 처음 생성할 때만 적용된다. 기존 DB의 비밀번호는 `.env` 수정만으로 변경되지 않는다.
-- 스키마 관리는 `backend/alembic/`에서 수행한다. initial revision은 `0001`, 현재 head는 스냅샷 테이블을 추가한 `0002`다. 개발용 seed는 별도 명령으로 실행한다.
+- 스키마 관리는 `backend/alembic/`에서 수행한다. initial revision은 `0001`, `0003`은 센서 순번·보관 인덱스, `0004`는 디미고·GPS, `0005`는 장애인 여부 기본값을 추가한다. 시설 seed는 별도 명령이다.
 - 서비스 정의는 이 디렉터리에 유지하고 루트 Compose는 실행 진입점으로 사용한다.
-- DB가 healthy가 된 뒤 Backend의 개발 시작 스크립트가 `alembic upgrade head`를 적용하고 서버를 시작한다.
+- DB가 healthy가 된 뒤 별도 migrate 작업이 migration·런타임 계정 권한을 설정한 뒤 API가 시작한다.
 
 DB 접속 확인 (저장소 루트):
 
@@ -22,13 +22,14 @@ docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SEL
 
 ## 모델과 관계
 
-SQLAlchemy 모델은 `backend/app/models/`에 모델별로 분리했다. 모든 필드는 non-null이다.
+SQLAlchemy 모델은 `backend/app/models/`에 모델별로 분리했다. GPS·시설 미확인·미관측 상태는 null을 허용한다.
+현재 디미고 시설과 추가 컬럼·실행 절차는 [디미고 인계](../docs/DIMIGO_GPS.md)와 [API 계약](../docs/api.md)을 따른다.
 
 | 모델 / 테이블 | 필드 |
 | --- | --- |
 | `Restroom` / `restrooms` | `id`, `name`, `building`, `floor`, `x`, `y`, `created_at` |
 | `Stall` / `stalls` | `id`, `restroom_id`, `stall_number`, `occupied`, `has_bidet`, `updated_at` |
-| `Sensor` / `sensors` | `id`, `device_id`, `restroom_id`, `stall_id`, `sensor_type`, `active` |
+| `Sensor` / `sensors` | `id`, `device_id`, `restroom_id`, `stall_id`, `sensor_type`, `active`, `last_sequence`, `last_occupied` |
 | `SensorEvent` / `sensor_events` | `id`, `sensor_id`, `event_type`, `value`, `created_at` |
 | `RestroomSnapshot` / `restroom_snapshots` | `id`, `restroom_id`, `total_stalls`, `available_stalls`, `available_bidet_stalls`, `captured_at`, `is_test_data` |
 
@@ -120,11 +121,11 @@ backend/.venv/bin/alembic -c backend/alembic.ini check
 ```
 
 Docker 실행에서는 변경된 모델과 migration이 이미지에 포함되도록 Backend를 먼저 빌드한다.
-기본 시작 시 자동 migration을 적용한다. 아래 upgrade 명령으로 명시적인 재적용도 가능하다.
+별도 migrate 작업이 관리자 계정으로 migration·런타임 권한을 설정한다. 아래 upgrade 명령으로 명시적인 재적용도 가능하다.
 
 ```bash
 docker compose up -d --build --wait backend
-docker compose exec backend alembic upgrade head
+docker compose run --rm migrate alembic upgrade head
 ```
 
 initial migration은 참조 순서대로 네 테이블을 생성하고 `downgrade`는 역순으로 제거한다.
@@ -133,11 +134,13 @@ initial migration은 참조 순서대로 네 테이블을 생성하고 `downgrad
 `downgrade base`는 업무 테이블과 데이터를 삭제하므로 개발 DB에 직접 실행하는 대신,
 [`backend/tests/test_database.py`](../backend/tests/test_database.py)의 임시 스키마 테스트로 왕복 적용을 검증한다.
 
-## 개발용 seed 데이터
+## 이전 개발용 fixture (테스트 전용)
+
+현재 `python -m app.seed`는 디미고 본관 8곳·39칸을 반영한다. 아래는 이전 가상 fixture이며 일반 앱 조회에서 제외된다.
 
 `backend/app/seed_data.py`에 정의된 **개발·데모 전용 테스트 데이터**다. 실제 건물 좌표나 센서 측정값이 아니다.
 모든 좌표는 임의 원점 `(0, 0)`을 기준으로 한 동일한 미터 단위 평면이며, 예시 사용자 기준 위치도 `(0, 0)`이다.
-실행 방법은 [`backend/README.md`](../backend/README.md#개발용-seed-실행)를 따른다.
+실행 방법은 [`backend/README.md`](../backend/README.md#디미고-시설-seed-실행)를 따른다.
 
 | 화장실 | building / floor | (x, y) | 칸 / 센서 수 | 초기 빈칸 / 빈 비데 칸 |
 | --- | --- | --- | --- | --- |
@@ -166,3 +169,6 @@ initial migration은 참조 순서대로 네 테이블을 생성하고 `downgrad
 총 화장실 3개, 칸 12개, 센서 12개다. 위 집계는 초기 fixture를 설명하기 위한 값이며 DB 컬럼으로 저장하지 않는다.
 이미 존재하는 레코드는 초기 값으로 되돌리지 않으므로 재실행 후 상태는 이 표와 다를 수 있다.
 초기 상태 설정은 실제 센서 상태 변경 이력이 아니므로 `SensorEvent`는 생성하지 않는다.
+
+API 컨테이너는 `APP_DB_USER`의 제한된 권한으로 실행한다. 관리자 자격 증명은 API에 전달하지 않는다.
+센서 순번·기본 90일 이벤트 보관 정책과 실행 계정 권한은 [보안 안내](../backend/SECURITY.md)를 참고한다.

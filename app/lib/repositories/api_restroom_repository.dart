@@ -32,17 +32,17 @@ class ApiRestroomRepository extends RestroomRepository {
     }
   });
   @override
-  Future<List<Restroom>> getRestrooms(UserLocation location) =>
-      api.get('/api/restrooms', (value) {
-        if (value is! List) throw const FormatException('Expected array');
-        final result = value
-            .map((r) => Restroom.fromJson(jsonObject(r)))
-            .toList();
-        if (result.map((r) => r.id).toSet().length != result.length) {
-          throw const FormatException('Duplicate restroom IDs');
-        }
-        return result;
-      }, query: location.query);
+  Future<List<Restroom>> getRestrooms(
+    UserLocation location, {
+    String? gender,
+  }) => api.get('/api/restrooms', (value) {
+    if (value is! List) throw const FormatException('Expected array');
+    final result = value.map((r) => Restroom.fromJson(jsonObject(r))).toList();
+    if (result.map((r) => r.id).toSet().length != result.length) {
+      throw const FormatException('Duplicate restroom IDs');
+    }
+    return result;
+  }, query: {...location.query, 'gender': ?gender});
   @override
   Future<Restroom> getDetail(int id, UserLocation location) => api.get(
     '/api/restrooms/$id',
@@ -57,16 +57,27 @@ class ApiRestroomRepository extends RestroomRepository {
   Future<Recommendation> getRecommendation(
     UserLocation location, {
     required bool bidetRequired,
-  }) => api.get('/api/restrooms/recommend', (value) {
-    final result = Recommendation.fromJson(jsonObject(value));
-    final rate = bidetRequired
-        ? result.historicalBidetAvailabilityRate
-        : result.historicalAvailabilityRate;
-    if (result.statisticsUsed && rate == null) {
-      throw const FormatException('Statistics flag requires the relevant rate');
-    }
-    return result;
-  }, query: {...location.query, 'bidet_required': '$bidetRequired'});
+    String? gender,
+  }) => api.get(
+    '/api/restrooms/recommend',
+    (value) {
+      final result = Recommendation.fromJson(jsonObject(value));
+      final rate = bidetRequired
+          ? result.historicalBidetAvailabilityRate
+          : result.historicalAvailabilityRate;
+      if (result.statisticsUsed && rate == null) {
+        throw const FormatException(
+          'Statistics flag requires the relevant rate',
+        );
+      }
+      return result;
+    },
+    query: {
+      ...location.query,
+      'bidet_required': '$bidetRequired',
+      'gender': ?gender,
+    },
+  );
   @override
   void dispose() {
     websocket.dispose();

@@ -1,83 +1,104 @@
 import 'package:flutter/material.dart';
-
+import 'package:geolocator/geolocator.dart';
 import '../services/location_service.dart';
 
 Future<UserLocation?> editLocation(
   BuildContext context,
-  UserLocation current,
-) => showDialog<UserLocation>(
+  UserLocation current, {
+  required LocationService service,
+}) => showDialog<UserLocation>(
   context: context,
-  builder: (_) => _LocationEditor(current: current),
+  builder: (_) => _LocationEditor(current: current, service: service),
 );
 
 class _LocationEditor extends StatefulWidget {
-  const _LocationEditor({required this.current});
+  const _LocationEditor({required this.current, required this.service});
   final UserLocation current;
-
+  final LocationService service;
   @override
   State<_LocationEditor> createState() => _LocationEditorState();
 }
 
 class _LocationEditorState extends State<_LocationEditor> {
-  final _form = GlobalKey<FormState>();
-  late final _label = TextEditingController(text: widget.current.label);
-  late final _x = TextEditingController(text: '${widget.current.x}');
-  late final _y = TextEditingController(text: '${widget.current.y}');
-
-  @override
-  void dispose() {
-    _label.dispose();
-    _x.dispose();
-    _y.dispose();
-    super.dispose();
-  }
-
-  String? _validateCoordinate(String? value) {
-    final number = double.tryParse(value?.trim() ?? '');
-    return number == null || !number.isFinite ? '유한한 숫자를 입력해 주세요.' : null;
+  late UserLocation _location = widget.current;
+  late bool _hasSelection = widget.service.hasSelectedLocation;
+  bool _loading = false;
+  LocationFailure? _error;
+  Future<void> _gps() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final value = await widget.service.currentGps(_location);
+      if (mounted) {
+        setState(() {
+          _location = value;
+          _hasSelection = true;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _error = error is LocationFailure
+              ? error
+              : const LocationFailure('위치를 확인하지 못했어요. 다시 시도해 주세요.'),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('기준 위치 설정'),
+    title: const Text('내 위치'),
     content: SingleChildScrollView(
-      child: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('GPS 대신 기준 위치를 사용해요.\n좌표 단위는 미터(m)입니다.'),
-            const SizedBox(height: 20),
-            TextFormField(
-              controller: _label,
-              maxLength: 40,
-              decoration: const InputDecoration(labelText: '위치 이름'),
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? '위치 이름을 입력해 주세요.'
-                  : null,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(_hasSelection ? _location.label : '현재 위치를 확인해 주세요.'),
+          if (_location.accuracy != null)
+            Text('위치 정확도 약 ${_location.accuracy!.round()}m'),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _loading ? null : _gps,
+            icon: const Icon(Icons.my_location_rounded),
+            label: Text(_loading ? '위치 확인 중…' : 'GPS로 현재 위치 가져오기'),
+          ),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: LinearProgressIndicator(),
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _x,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'X 좌표 (m)'),
-              validator: _validateCoordinate,
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(_error!.message),
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _y,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Y 좌표 (m)'),
-              validator: _validateCoordinate,
+          if (_error?.openSettings == true)
+            TextButton(
+              onPressed: Geolocator.openAppSettings,
+              child: const Text('기기 설정 열기'),
             ),
-          ],
-        ),
+          TextButton(
+            onPressed: _loading
+                ? null
+                : () => setState(() {
+                    _location = UserLocation(
+                      label: '디미고 본관 기준',
+                      latitude: dimigoLatitude,
+                      longitude: dimigoLongitude,
+                    );
+                    _error = null;
+                    _hasSelection = true;
+                  }),
+            child: const Text('본관 기준 위치 사용'),
+          ),
+          const SizedBox(height: 16),
+          const Text('GPS로 본관·신관·체육관까지의 거리를 확인해요. 층을 입력할 필요는 없습니다.'),
+        ],
       ),
     ),
     actions: [
@@ -86,17 +107,9 @@ class _LocationEditorState extends State<_LocationEditor> {
         child: const Text('취소'),
       ),
       FilledButton(
-        onPressed: () {
-          if (!_form.currentState!.validate()) return;
-          Navigator.pop(
-            context,
-            UserLocation(
-              label: _label.text.trim(),
-              x: double.parse(_x.text.trim()),
-              y: double.parse(_y.text.trim()),
-            ),
-          );
-        },
+        onPressed: _loading || !_hasSelection
+            ? null
+            : () => Navigator.pop(context, _location),
         child: const Text('적용'),
       ),
     ],

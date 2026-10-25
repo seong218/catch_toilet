@@ -20,8 +20,12 @@ class AppController extends ChangeNotifier {
   List<Restroom> restrooms = const [];
   Recommendation? recommendation;
   bool bidetRequired = false;
+  bool accessibleOnly = false;
+  String gender = 'male';
   bool loading = true;
   bool recommendationLoading = false;
+  bool recommendationLocating = false;
+  LocationFailure? recommendationLocationError;
   bool backendOnline = false;
   RealtimeStatus realtimeStatus;
   String? listError;
@@ -40,6 +44,7 @@ class AppController extends ChangeNotifier {
   Timer? _repairTimer;
   int _listRequest = 0;
   int _recommendationRequest = 0;
+  int _locationRequest = 0;
   int? _openDetailId;
   bool _started = false;
   bool _connecting = false;
@@ -49,7 +54,61 @@ class AppController extends ChangeNotifier {
   int _resumeEpoch = 0;
 
   UserLocation get location => locationService.current;
+  bool get hasSelectedLocation => locationService.hasSelectedLocation;
+  bool get _canRecommend =>
+      hasSelectedLocation &&
+      !recommendationLocating &&
+      recommendationLocationError == null;
   bool get isMock => repository.isMock;
+  bool get accessibleFilterLoading =>
+      accessibleOnly &&
+      restrooms.any(
+        (room) =>
+            room.accessibleStalls > 0 &&
+            (loadingDetails.contains(room.id) ||
+                _repairIds.contains(room.id) ||
+                (!details.containsKey(room.id) &&
+                    !detailErrors.containsKey(room.id))),
+      );
+
+  bool hasAvailableAccessibleStall(int id, {bool bidetRequired = false}) {
+    if (loading ||
+        loadingDetails.contains(id) ||
+        _repairIds.contains(id) ||
+        detailErrors.containsKey(id)) {
+      return false;
+    }
+    return details[id]?.stalls?.any(
+          (stall) =>
+              stall.occupied == false &&
+              stall.isAccessible == true &&
+              (!bidetRequired || stall.hasBidet == true),
+        ) ??
+        false;
+  }
+
+  Future<void> setAccessibleOnly(bool value) async {
+    if (_disposed || accessibleOnly == value) return;
+    accessibleOnly = value;
+    _notify();
+    if (value) await _loadAccessibleDetails();
+  }
+
+  Future<void> _loadAccessibleDetails() async {
+    if (_disposed || !accessibleOnly) return;
+    // List responses contain installation counts, not accessible availability.
+    // Cache these few details so normal events can update each stall locally.
+    await Future.wait([
+      for (final room in restrooms)
+        if (room.accessibleStalls > 0 && !loadingDetails.contains(room.id))
+          loadDetail(room.id),
+    ]);
+  }
+
+  bool get hasSimulatedData =>
+      restrooms.any((room) => room.simulatedStalls > 0) ||
+      (details[_openDetailId]?.simulatedStalls ?? 0) > 0 ||
+      (recommendation?.restroom.simulatedStalls ?? 0) > 0;
   bool get isRealtime =>
       realtimeStatus == RealtimeStatus.connected &&
       backendOnline &&
@@ -142,7 +201,7 @@ class AppController extends ChangeNotifier {
     _notify();
     try {
       await repository.checkHealth();
-      final result = await repository.getRestrooms(origin);
+      final result = await repository.getRestrooms(origin, gender: gender);
       if (_disposed || request != _listRequest) return;
       final current = {for (final r in restrooms) r.id: r};
       final merged = <Restroom>[];
@@ -158,6 +217,9 @@ class AppController extends ChangeNotifier {
       restrooms = List.unmodifiable(merged);
       backendOnline = !isMock;
       lastUpdated = DateTime.now();
+      // Also refresh filtered details after reconnect, pull-to-refresh, or a
+      // gender/location change; a retained cache may have missed events.
+      if (accessibleOnly) await _loadAccessibleDetails();
     } catch (error) {
       if (_disposed || request != _listRequest) return;
       backendOnline = false;
@@ -170,6 +232,12 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> setGender(String value) async {
+    if (value == gender || !['male', 'female'].contains(value)) return;
+    gender = value;
+    await _reloadLocationData();
+  }
+
   Future<void> setBidetRequired(bool value) async {
     if (value == bidetRequired) return;
     bidetRequired = value;
@@ -178,7 +246,15 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setLocation(UserLocation value) async {
+    if (_disposed) return;
     locationService.setLocation(value);
+    ++_locationRequest;
+    recommendationLocating = false;
+    recommendationLocationError = null;
+    await _reloadLocationData();
+  }
+
+  Future<void> _reloadLocationData() async {
     details.clear();
     detailErrors.clear();
     for (final id in _detailRequests.keys.toList()) {
@@ -190,8 +266,40 @@ class AppController extends ChangeNotifier {
     await refresh();
   }
 
+  // Explicit recommendation requests refresh GPS. Sensor/filter refreshes reuse
+  // the confirmed location and never prompt for permission on their own.
+  Future<void> requestRecommendation() async {
+    if (_disposed || recommendationLocating) return;
+    if (hasSelectedLocation && !location.isGps) {
+      await refreshRecommendation();
+      return;
+    }
+    final request = ++_locationRequest;
+    ++_recommendationRequest;
+    _recommendationTimer?.cancel();
+    recommendationLocating = true;
+    recommendationLoading = false;
+    recommendation = null;
+    recommendationError = null;
+    recommendationEmpty = null;
+    recommendationLocationError = null;
+    _notify();
+    try {
+      final value = await locationService.currentGps(location);
+      if (_disposed || request != _locationRequest) return;
+      await setLocation(value);
+    } catch (error) {
+      if (_disposed || request != _locationRequest) return;
+      recommendationLocating = false;
+      recommendationLocationError = error is LocationFailure
+          ? error
+          : const LocationFailure('현재 위치를 확인하지 못했어요. 다시 시도해 주세요.');
+      _notify();
+    }
+  }
+
   Future<void> refreshRecommendation() async {
-    if (_disposed) return;
+    if (_disposed || !_canRecommend) return;
     _recommendationTimer?.cancel();
     final request = ++_recommendationRequest;
     recommendationLoading = true;
@@ -202,6 +310,7 @@ class AppController extends ChangeNotifier {
       final result = await repository.getRecommendation(
         location,
         bidetRequired: bidetRequired,
+        gender: gender,
       );
       if (_disposed || request != _recommendationRequest) return;
       recommendation = result;
@@ -209,9 +318,13 @@ class AppController extends ChangeNotifier {
       if (_disposed || request != _recommendationRequest) return;
       recommendation = null;
       if (error.isNotFound) {
-        recommendationEmpty = error.detail == 'No available bidet stalls'
-            ? '지금은 사용 가능한 비데 칸이 없어요.'
-            : '아직 추천할 화장실이 없어요.';
+        recommendationEmpty = switch (error.detail) {
+          'Live availability unavailable' =>
+            '아직 센서 상태가 확인되지 않았어요. 목록 탭에서 시설 정보를 확인하세요.',
+          'Restroom location unavailable' => '화장실 위치를 확인하고 있어요.',
+          'No available bidet stalls' => '현재 사용 가능하다고 확인된 비데 칸이 없어요.',
+          _ => '아직 추천할 화장실이 없어요.',
+        };
       } else {
         recommendationError = error.message;
       }
@@ -228,6 +341,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _scheduleRecommendation() {
+    if (!_canRecommend) return;
     ++_recommendationRequest; // Invalidate responses started before this event.
     recommendationLoading = true;
     _recommendationTimer?.cancel();
@@ -287,6 +401,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _upsert(Restroom room) {
+    if (!isMock && room.gender != gender) return;
     final updated = [...restrooms.where((r) => r.id != room.id), room];
     updated.sort((a, b) {
       final distance = (a.distance ?? double.infinity).compareTo(
@@ -324,12 +439,15 @@ class AppController extends ChangeNotifier {
     final unknownStall = cached != null && (knownStalls?.isEmpty ?? true);
     final sameStall =
         knownStalls?.isNotEmpty == true &&
-        knownStalls!.first.occupied == event.occupied;
+        knownStalls!.first.occupied == event.occupied &&
+        knownStalls.first.isSimulated == event.isSimulated;
     if (before != null &&
         !unknownStall &&
         before.totalStalls == event.totalStalls &&
         before.availableStalls == event.availableStalls &&
         before.availableBidetStalls == event.availableBidetStalls &&
+        before.unknownStalls == event.unknownStalls &&
+        before.simulatedStalls == event.simulatedStalls &&
         (cached == null || sameStall)) {
       return;
     }
@@ -354,12 +472,16 @@ class AppController extends ChangeNotifier {
     final inconsistent =
         updatedDetail != null &&
         (updatedDetail.stalls!.length != updatedDetail.totalStalls ||
-            updatedDetail.stalls!.where((s) => !s.occupied).length !=
+            updatedDetail.stalls!.where((s) => s.occupied == false).length !=
                 updatedDetail.availableStalls ||
             updatedDetail.stalls!
-                    .where((s) => !s.occupied && s.hasBidet)
+                    .where((s) => s.occupied == false && s.hasBidet == true)
                     .length !=
-                updatedDetail.availableBidetStalls);
+                updatedDetail.availableBidetStalls ||
+            updatedDetail.stalls!.where((s) => s.occupied == null).length !=
+                updatedDetail.unknownStalls ||
+            updatedDetail.stalls!.where((s) => s.isSimulated).length !=
+                updatedDetail.simulatedStalls);
     if (before == null || unknownStall || inconsistent) {
       _scheduleRepair(event.restroomId);
     }

@@ -3,7 +3,14 @@
 Python 3.13, FastAPI, SQLAlchemy 2, psycopg 3, Alembic을 사용한다.
 현재 `GET /api/health`, `GET /api/restrooms`, `GET /api/restrooms/{restroom_id}`,
 `GET /api/restrooms/recommend`, `POST /api/sensors/stall`, `WS /ws`를 제공한다.
-계약은 [`docs/api.md`](../docs/api.md)를 따른다.
+계약은 [`docs/api.md`](../docs/api.md)를 따른다. 현재 보안 설정·변경 사항은 [SECURITY.md](SECURITY.md)에 정리했다.
+
+현재 디미고 본관 8곳·39칸과 GPS 계약·실행은 [디미고 인계](../docs/DIMIGO_GPS.md)를 따른다.
+
+## PC 상태 시뮬레이션
+
+현재 본관 39칸을 랜덤·직접 지정하여 조회·추천·WebSocket 전체 흐름을 확인할 수 있다.
+[사용법·임시 상태·인계](../docs/SIMULATION.md)를 참고한다. 실제 DB 상태와 센서 이력을 덮어쓰지 않는다.
 
 ## 환경변수
 
@@ -13,7 +20,7 @@ Python 3.13, FastAPI, SQLAlchemy 2, psycopg 3, Alembic을 사용한다.
 cp backend/.env.example backend/.env
 ```
 
-`backend/.env`의 `POSTGRES_PASSWORD`에 직접 생성한 비밀번호를 입력한다.
+`backend/.env`의 `POSTGRES_PASSWORD`와 `APP_DB_PASSWORD`에 서로 다른 32자 이상 난수 비밀번호를 입력한다.
 예를 들어 `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`로 생성할 수 있다.
 `.env`는 Git 및 Docker 빌드에서 제외한다. 실제 비밀번호를 예제나 코드에 기록하지 않는다.
 
@@ -22,14 +29,17 @@ cp backend/.env.example backend/.env
 | `POSTGRES_HOST` | 로컬 실행의 DB 호스트, 기본 `localhost`. Compose 내부에서는 `db`로 설정 |
 | `POSTGRES_PORT` | 로컬 DB 포트 및 Compose의 호스트 공개 포트, 기본 `5432`. 컨테이너 내부는 `5432` |
 | `POSTGRES_DB` | 필수 DB 이름 |
-| `POSTGRES_USER` | 필수 DB 사용자 |
-| `POSTGRES_PASSWORD` | 필수 비밀번호, 빈 값 불가 |
+| `POSTGRES_USER` | DB·migration 관리자 사용자. API 컨테이너에는 전달하지 않음 |
+| `POSTGRES_PASSWORD` | DB·migration 관리자 비밀번호 |
+| `APP_DB_USER`, `APP_DB_PASSWORD` | API 전용 계정과 별도 난수 비밀번호. migration 작업이 제한된 권한으로 생성 |
 | `DB_CONNECT_TIMEOUT` | 연결 및 connection pool 대기 제한(초), 기본 `5` |
 | `DB_STATEMENT_TIMEOUT_MS` | SQL 실행 제한(밀리초), 기본 `5000` |
 | `MIN_STAT_SAMPLE_COUNT` | 통계를 사용할 최소 관측 표본 수, 기본 `30`, 1 이상 |
 | `STAT_LOOKBACK_DAYS` | 통계의 과거 조회 기간(일), 기본 `56`, 1~3650 |
 | `RECOMMENDATION_DISTANCE_TOLERANCE` | 가장 가까운 사용 가능 후보와의 거리 차이 허용값(m), 기본 `10`, 0 이상의 유한한 수. 0이면 같은 거리끼리만 비교 |
 | `API_PORT` | Compose에서 공개할 API 포트, 기본 `8000` |
+| `API_BIND_HOST` | Compose 호스트 공개 주소, 기본 `127.0.0.1`. 실제 기기 연결 시 LAN IP를 명시 |
+| `SENSOR_API_KEYS` | `device_id` → 기기별 비밀 키 JSON 객체. 기본 `{}`이면 센서 쓰기는 `503`으로 차단 |
 | `CORS_ALLOWED_ORIGINS` | 브라우저 프론트엔드의 허용 origin JSON 배열. 기본 localhost·127.0.0.1의 3000·8080 포트, `[]`로 비활성화 |
 
 FastAPI와 Alembic 모두 작업 디렉터리와 무관하게 `backend/.env`를 읽는다.
@@ -50,15 +60,16 @@ Docker Compose **2.20.3 이상**이 필요하다 (`docker compose version`으로
 docker compose up
 ```
 
-실행 순서는 **PostgreSQL healthcheck → Alembic upgrade head → 단일 Uvicorn 프로세스**다.
-`backend/docker-start.sh`에서 migration이 실패하면 서버를 시작하지 않고 오류로 종료한다.
-개발용 seed는 자동 실행하지 않는다. 빈 DB에서 화장실 목록은 `[]`이며 아래 seed 명령으로 데모 데이터를 넣는다.
+실행 순서는 **PostgreSQL healthcheck → migrate 작업의 Alembic·권한 설정 → 단일 Uvicorn 프로세스**다.
+`backend/docker-migrate.sh`의 migration·권한 설정이 실패하면 API 컨테이너가 시작되지 않는다.
+`backend/docker-start.sh`는 제한된 계정으로 Uvicorn만 실행한다.
+시설 seed는 자동 실행하지 않는다. 빈 DB의 화장실 목록은 `[]`이며 아래 명령으로 실제 본관 시설을 넣는다.
 
 백그라운드 실행 또는 소스·migration 변경 후 이미지 갱신:
 
 ```bash
 docker compose up -d --build --wait
-docker compose exec backend python -m app.seed
+docker compose run --rm migrate python -m app.seed
 docker compose ps
 curl -i http://localhost:8000/api/health
 ```
@@ -88,16 +99,16 @@ DB 초기 계정 설정은 빈 volume에만 적용된다. 기존 비밀번호를
 Compose 시작 시 자동 적용된다. 현재 revision 확인과 명시적인 재적용은 다음과 같다.
 
 ```bash
-docker compose exec backend alembic current
-docker compose exec backend alembic upgrade head
-docker compose exec backend alembic check
+docker compose run --rm migrate alembic current
+docker compose run --rm migrate alembic upgrade head
+docker compose run --rm migrate alembic check
 ```
 
 서버가 시작하지 못한 상태에서 migration만 실행하려면 DB를 먼저 준비한다.
 
 ```bash
 docker compose up -d --wait db
-docker compose run --rm --build backend alembic upgrade head
+docker compose run --rm --build migrate alembic upgrade head
 ```
 
 모델·migration 파일 변경 후에는 이미지를 다시 빌드한다. 데이터가 있는 개발 DB에 downgrade를 실행하지 않는다.
@@ -106,7 +117,7 @@ docker compose run --rm --build backend alembic upgrade head
 
 [FastAPI CORSMiddleware](https://fastapi.tiangolo.com/tutorial/cors/)를 사용한다.
 기본 허용 origin은 `http://localhost:3000`, `http://127.0.0.1:3000`,
-`http://localhost:8080`, `http://127.0.0.1:8080`이다. GET·POST 및 JSON Content-Type preflight를 지원하며
+`http://localhost:8080`, `http://127.0.0.1:8080`이다. GET·POST 및 Content-Type·Authorization preflight를 지원하며
 쿠키 credentials는 사용하지 않는다. 허용되지 않은 origin의 preflight는 400이다.
 
 브라우저 프론트엔드의 실제 origin(프로토콜·호스트·포트)에 맞춰 `backend/.env`를 변경한다.
@@ -121,9 +132,13 @@ CORS_ALLOWED_ORIGINS='["http://localhost:5173","http://127.0.0.1:5173"]'
 CORS는 브라우저 HTTP 정책이며 native Flutter·Arduino에는 적용되지 않는다. WebSocket 연결 계약도 그대로다.
 
 - 개발 PC에서 REST: `http://localhost:8000`, WebSocket: `ws://localhost:8000/ws`.
+- iPhone 시뮬레이터에서도 `http://localhost:8000`, `ws://localhost:8000/ws`를 사용한다.
 - Android 기본 에뮬레이터에서 개발 PC: `http://10.0.2.2:8000`, `ws://10.0.2.2:8000/ws`.
-- 실제 기기·Arduino: 같은 네트워크의 **개발 PC LAN IP**와 API 포트를 사용한다. 모바일의 `localhost`는 기기 자신이다.
-- API는 기기 접속을 위해 호스트 인터페이스에 공개하고, PostgreSQL은 `127.0.0.1`에만 공개한다.
+- 실제 기기·Arduino: `.env`의 `API_BIND_HOST`를 **개발 PC LAN IP**로 설정하고 Backend를 재생성한다.
+  로컬과 LAN 둘 다 필요하면 `0.0.0.0`으로 명시한다. 기기는 PC의 LAN IP와 API 포트로 접속한다.
+  실제 모바일 기기의 `localhost`는 기기 자신이다. 센서 요청에는 해당 기기의 Bearer 키도 필요하다.
+- API와 PostgreSQL의 기본 호스트 공개 주소는 `127.0.0.1`이다. 컨테이너 내부 Uvicorn은 Docker 포트 전달을 위해
+  `0.0.0.0`에 바인딩하지만 호스트 공개 범위는 `API_BIND_HOST`로 제한한다.
 
 ## 로컬 Python으로 실행
 
@@ -136,7 +151,8 @@ python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 alembic upgrade head
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# API 실행 때는 APP_DB_USER/APP_DB_PASSWORD를 POSTGRES_USER/POSTGRES_PASSWORD에 주입한다.
+# 관리자 환경을 그대로 사용하지 말고 SECURITY.md의 로컬 실행 예시를 따른다.
 ```
 
 로컬 Uvicorn의 포트는 `--port`로 지정한다. Docker 없이 준비된 PostgreSQL을 쓰려면
@@ -146,6 +162,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 - `app/main.py`: 앱 생성, 라우터 등록, 시작·종료 시 WebSocket manager와 connection pool 관리.
 - `app/config.py`: 환경변수 검증과 DB URL 조립.
+- `app/sensor_auth.py`: 기기별 Bearer 키 검증과 인증 실패 시 DB 접근 차단.
 - `app/db.py`: 공통 `Base`, engine, `SessionLocal`, 요청 단위 `get_db`.
 - `app/models/`: Restroom, Stall, Sensor, SensorEvent, RestroomSnapshot SQLAlchemy 모델.
 - `app/seed_data.py`, `app/seed.py`: 개발용 fixture와 기존 데이터를 유지하는 seed 명령.
@@ -163,7 +180,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 - `app/services/sensors.py`: 상태 비교, 동일 상태 생략, 상태·이벤트 원자적 저장과 commit.
 - `app/api/websocket.py`, `app/schemas/realtime.py`: `/ws` 연결과 `stall.updated` 이벤트 모델.
 - `app/realtime/manager.py`: 클라이언트별 전송 큐, 방송 순서, 연결 실패·종료 처리.
-- `alembic.ini`, `alembic/`: initial migration `0001`, 통계 원본 스냅샷 테이블을 추가하는 `0002`.
+- `alembic.ini`, `alembic/`: initial migration `0001`, 통계 스냅샷 `0002`, 센서 순번·보관 인덱스 `0003`.
 - `tests/test_database.py`: 임시 PostgreSQL 스키마에서 수행하는 모델·migration·seed 통합 테스트.
 - `tests/test_restroom_snapshots.py`: 관측 시각·집계·출처·중복 제약, 과거 상태 보존, 서울 요일·시간 조회 검사.
 - `tests/test_statistics.py`: 비율·표본 기준·시간대·조회 기간·설정·오류와 여러 화장실의 통계 일괄 조회 검증.
@@ -171,6 +188,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 - `tests/test_restrooms_api.py`: 임시 PostgreSQL 스키마를 사용하는 조회 API 계약 테스트.
 - `tests/test_recommendation_api.py`, `tests/test_location.py`: 추천 분기·입력·응답 계약과 거리 계산 테스트.
 - `tests/test_sensors_api.py`: 실제 commit·rollback·동시 요청을 검사하는 Sensor API 통합 테스트.
+- `tests/test_sensor_auth.py`: 기기별 권한, 키 누락·오류·교체·철회, 설정 누락·오류와 secret 노출 방지.
 - `tests/test_websocket_api.py`, `tests/test_connection_manager.py`: DB→WebSocket 흐름, 순서, 다중 연결·실패 격리 검사.
 - `requirements-dev.txt`: 테스트 클라이언트에 필요한 개발 의존성. 런타임 이미지에는 설치하지 않는다.
 - `Dockerfile`, `docker-start.sh`, `requirements.txt`, `.env.example`: 실행 이미지, migration 후 서버 시작, 의존성, 환경변수 예제.
@@ -179,7 +197,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 - [`database/docker-compose.yml`](../database/docker-compose.yml): PostgreSQL과 Backend 실행.
 
 FastAPI 앱 자체는 `create_all`이나 migration을 실행하지 않는다.
-Docker 개발 시작 스크립트에서 Alembic을 먼저 실행하며, 로컬 Python 실행에서는 아래 명령을 직접 실행한다.
+Docker의 별도 migrate 작업에서 Alembic을 먼저 실행하며, 로컬 Python 실행에서는 아래 명령을 직접 실행한다.
 `alembic upgrade head`는 `restrooms`, `stalls`, `sensors`, `sensor_events`, `restroom_snapshots`와 Alembic 관리 테이블을 생성한다.
 추후 모델을 추가할 때 공통 `Base`를 사용하고 `app/models/__init__.py`에 모델을 import한 뒤
 `alembic revision --autogenerate -m "설명"`으로 생성된 변경을 검토한다.
@@ -187,7 +205,7 @@ Docker 개발 시작 스크립트에서 Alembic을 먼저 실행하며, 로컬 P
 관계, 제약조건, 이벤트 필드의 의미는 [`database/README.md`](../database/README.md)에 기록했다.
 개발용 seed는 아래 명령으로 직접 실행한다. 실시간 상태·거리 기반 추천과 독립 통계 service를 제공한다.
 추천은 충분히 가까운 후보 사이에서 신뢰 가능한 통계를 보조 기준으로 사용한다.
-API 계약과 Flutter/IoT 영역은 변경하지 않는다. 루트 Compose와 README는 개발 실행 진입점이다.
+GPS·시설·미관측 상태 계약은 docs/api.md를 따른다. 루트 Compose와 README는 개발 실행 진입점이다.
 
 통계 원본용 `RestroomSnapshot` 구조와 `0002` migration을 제공한다. 관측 당시 전체 칸·빈칸·빈 비데 칸,
 timezone이 있는 실제 관측 시각, 테스트 데이터 여부를 필수로 저장한다. 통계 계산은 아래 service로 제공하며 자동 수집은 아직 없다.
@@ -213,7 +231,7 @@ curl -i 'http://localhost:8000/api/restrooms/1?x=10&y=20'
 - 등록된 화장실이 없으면 목록은 `200 []`, 존재하지 않는 ID의 상세는 `404 {"detail":"Restroom not found"}`다.
 - DB 접근 실패는 `503 {"detail":"Database unavailable"}`이며 내부 연결 정보를 응답에 노출하지 않는다.
 
-신규 DB migration이나 환경변수는 필요하지 않다. 정적 `/recommend` 경로는
+GPS·시설 변경에는 migration 적용이 필요하다. 정적 `/recommend` 경로는
 `/{restroom_id}`보다 먼저 등록해 정수 ID 검증과 충돌하지 않도록 했다.
 
 ## 추천 API
@@ -223,7 +241,7 @@ curl -i 'http://localhost:8000/api/restrooms/recommend?x=10&y=20&bidet_required=
 curl -i 'http://localhost:8000/api/restrooms/recommend?x=10&y=20&bidet_required=true'
 ```
 
-`x`, `y`는 필수이며 같은 미터 단위 평면 좌표를 사용한다. 음수와 0을 허용한다.
+새 앱은 `latitude`, `longitude`를 함께 보낸다. 위 x/y 요청은 구형 호환 예시다. 선택 gender 필터를 지원하며 현재 층 입력은 없다.
 누락·빈 값·문자열 null·비숫자·비유한 좌표, 해석할 수 없는 boolean은 `422`다.
 `bidet_required`는 생략하면 `false`이며 Flutter는 `true`/`false` 문자열로 전송한다.
 
@@ -231,12 +249,13 @@ curl -i 'http://localhost:8000/api/restrooms/recommend?x=10&y=20&bidet_required=
 | --- | --- |
 | 일반 요청, 빈칸 있음 | `available_stalls > 0`을 후보로 선정 |
 | 비데 필수, 빈 비데 칸 있음 | `available_bidet_stalls > 0`을 후보로 선정 |
-| 모든 화장실의 `available_stalls == 0` | 비데 설정과 관계없이 전체에서 가장 가까운 화장실 |
+| 빈칸이 없고 미관측 칸이 있음 | `404 / Live availability unavailable` |
+| 모든 화장실의 `available_stalls == 0`, `unknown_stalls == 0` | 비데 설정과 관계없이 전체에서 가장 가까운 화장실 |
 | 일반 빈칸은 있으나 빈 비데 칸이 없는 비데 필수 요청 | `404 {"detail":"No available bidet stalls"}` |
 | 화장실 미등록 | `404 {"detail":"No restrooms found"}` |
 | DB 접근 실패 | `503 {"detail":"Database unavailable"}` |
 
-거리는 기존 `Location Service`의 `math.hypot`으로 계산하며 반올림하지 않는다.
+거리는 `Location Service`가 GPS 구면 직선거리로 계산하며 반올림하지 않는다. 구형 x/y만 math.hypot을 사용한다.
 층·계단·실제 보행 경로는 거리 계산에 포함하지 않는다.
 칸이 없는 화장실은 집계값이 모두 0이며, 전체 빈칸이 없을 때의 fallback에는 포함된다.
 
@@ -254,7 +273,7 @@ curl -i 'http://localhost:8000/api/restrooms/recommend?x=10&y=20&bidet_required=
 전체 만석은 위 통계 비교를 거치지 않고 전체에서 가장 가까운 화장실을 선택한다.
 통계가 충분해도 현재 사용할 수 없는 칸을 사용 가능한 후보보다 우선하지 않는다.
 
-응답은 `Restroom`의 10개 필드에 다음 3개 필드를 더한 평평한 객체다. `stalls`나 wrapper는 없다.
+응답은 GPS·시설 정보를 포함한 `Restroom` 필드에 다음 3개 필드를 더한 평평한 객체다. `stalls`나 wrapper는 없다.
 추천의 `distance`는 항상 숫자이며 null이 아니다. 아래는 통계가 없는 경우의 세 필드다.
 
 ```json
@@ -341,23 +360,58 @@ cd backend
 ## Sensor Update API
 
 Arduino UNO R4 WiFi는 등록된 `device_id`와 안정화된 JSON boolean 상태를 보낸다.
-비밀번호·인증 헤더 등 추가 필드는 현재 계약에서 요구하지 않는다.
+**`Authorization: Bearer <해당 기기의 키>`가 필수**다. `device_id`는 공개 식별자이며 인증 정보가 아니다.
+서버는 키가 본문의 기기와 일치하는지 DB 접근 전에 확인한다. 다른 기기의 키는 사용할 수 없다.
+Flutter의 조회 API와 WebSocket에는 이 키를 전달하지 않는다.
+
+### 기기별 키 설정과 교체
+
+개발 PC에서 기기마다 키를 생성한다. 아래 출력은 비밀이므로 저장소·채팅·공유 로그에 넣지 않는다.
+
+```bash
+python3 -c 'import json,secrets; print(json.dumps({"stall-a-01":secrets.token_urlsafe(32)}))'
+```
+
+출력한 JSON 객체를 `backend/.env`의 `SENSOR_API_KEYS='...'` 값에 넣는다.
+다른 기기는 같은 JSON 객체에 각자의 `device_id`와 **별도로 생성한 키**를 추가한다.
+키는 32바이트 이상 난수로 생성하며 URL-safe 문자 43~128자만 허용한다. 중복 키·잘못된 설정은 시작 시 거부한다.
+설정이 없거나 `{}`이면 조회 API는 계속 동작하지만 모든 센서 쓰기는 `503`으로 차단된다.
+
+```bash
+chmod 600 backend/.env
+docker compose up -d --build --wait backend
+```
+
+해당 기기에만 키를 안전하게 전달하고, 펌웨어 소스나 Flutter 앱에 하드코딩하지 않는다.
+키 교체는 JSON의 해당 기기 값만 새 난수로 바꾸고 Backend를 재생성한다.
+키 철회는 해당 항목을 삭제하고 Backend를 재생성한다. 단순 `restart`로는 Compose 환경변수가 갱신되지 않는다.
+운영·외부 네트워크에서는 TLS를 종료하는 프록시를 두고 HTTPS로 전송한다.
+로컬 개발용 HTTP는 Bearer 키의 도청이나 캡처된 요청 재생을 막지 않는다.
+
+### 호출과 응답
+
+테스트 터미널의 `SENSOR_API_KEY`에 해당 기기의 키를 설정한 뒤 호출한다.
+Swagger UI에서는 **Authorize → SensorBearer**에 키만 입력한다.
+아래 `sequence:1`은 아직 요청하지 않은 새 기기의 예시다. 기존 기기는 마지막 승인 번호보다 큰 번호를 사용한다.
 
 ```bash
 curl -i -X POST http://localhost:8000/api/sensors/stall \
   -H 'Content-Type: application/json' \
-  -d '{"device_id":"stall-a-01","occupied":true}'
+  -H "Authorization: Bearer ${SENSOR_API_KEY:?Set the device-specific key}" \
+  -d '{"device_id":"stall-a-01","occupied":true,"sequence":1}'
 ```
 
-성공은 `200 {"success":true,"changed":true}`이며, 같은 상태를 재전송하면
+성공은 `200 {"success":true,"changed":true}`이며, 같은 번호·같은 상태를 재전송하면
 `200 {"success":true,"changed":false}`다. 다음 순서로 처리한다.
 
-1. `device_id`는 공백만 있는 값이나 빈 문자열을 거부하고, 대소문자·앞뒤 공백을 바꾸지 않고 정확히 조회한다.
+1. `device_id`는 128자 이하의 ASCII 식별자이며 공백·제어문자를 거부한다. `sequence`는 기기별로 증가하는 양의 정수다.
    `occupied`는 JSON `true`/`false`만 허용하며 숫자나 문자열 boolean은 `422`다.
-2. 한 트랜잭션에서 센서 행을 잠근 뒤 존재 여부와 활성 상태를 확인한다.
+2. 한 트랜잭션에서 센서 행을 잠근 뒤 존재·활성 상태와 마지막 `sequence`를 확인한다.
+   오래된 번호·같은 번호의 다른 상태는 `409`, 같은 번호·같은 상태는 `changed=false`다.
 3. 연결된 칸 행을 `FOR UPDATE`로 잠그고 화장실 존재·소속 일치를 확인한다.
    서로 다른 센서가 같은 칸을 갱신하더라도 칸 잠금을 기준으로 순차 처리한다.
 4. 상태가 같으면 Stall UPDATE와 SensorEvent INSERT를 모두 생략하며 `updated_at`도 유지한다.
+   새 번호는 `Sensor.last_sequence/last_occupied`에 원자적으로 저장한다. 상태 변경 간격 제한은 `429`다.
 5. 상태가 바뀌면 `occupied`와 `updated_at`을 갱신하고 `occupancy_changed` 이벤트를 같은 트랜잭션에 저장한다.
    이벤트 `value`는 변경 후 상태다. 잠금 획득 뒤 DB의 `clock_timestamp()`를 읽어 Stall과 이벤트에 같은 처리 시각을 기록한다.
 6. 같은 트랜잭션에서 변경 후 집계값을 읽어 이벤트를 준비한다. commit 성공 뒤에만 WebSocket 큐에 넣고 성공 응답을 반환한다.
@@ -365,13 +419,18 @@ curl -i -X POST http://localhost:8000/api/sensors/stall \
 
 | 오류 | 응답 |
 | --- | --- |
-| 등록되지 않은 기기 | `404 {"detail":"Sensor not found"}` |
+| 키 누락·오류·다른 기기의 키·해당 기기의 키 미설정 | `401 {"detail":"Invalid sensor credentials"}`, `WWW-Authenticate: Bearer` |
+| 인증은 성공했지만 DB에 등록되지 않은 기기 | `404 {"detail":"Sensor not found"}` |
 | 비활성 센서 | `409 {"detail":"Sensor is inactive"}` |
+| 오래된 순번·동일 순번의 다른 상태 | `409 {"detail":"Stale sensor sequence"}` |
 | 연결된 칸·화장실 없음 또는 소속 불일치 | `409 {"detail":"Sensor mapping is invalid"}` |
-| 누락·null·잘못된 타입·빈 ID·잘못된 JSON | `422`, FastAPI 기본 검증 오류 배열 |
+| 누락·null·잘못된 타입·잘못된 ID·JSON | `422`, `loc/msg/type` 검증 오류 배열 |
+| 요청 속도·상태 변경 간격 제한 | `429 {"detail":"Sensor rate limit exceeded"}`, `Retry-After` |
+| 서버의 센서 키 설정이 없거나 빈 객체 | `503 {"detail":"Sensor authentication unavailable"}` |
 | DB 연결·저장 실패 | `503 {"detail":"Database unavailable"}` |
 
-현 DB 제약조건은 연결 누락·소속 불일치를 막지만 API도 방어적으로 검사한다. 모델과 migration은 변경하지 않았다.
+현 DB 제약조건은 연결 누락·소속 불일치를 막지만 API도 방어적으로 검사한다.
+`0003` migration이 재전송 방지용 Sensor 순번·마지막 상태와 이벤트 보관용 인덱스를 추가한다.
 서비스 `update_stall_occupancy`는 시작된 트랜잭션이 없는 새 Session을 받아 트랜잭션을 직접 관리한다.
 반환값은 commit된 변경의 `StallUpdated` 이벤트이며, 상태가 같으면 `None`이다.
 Sensor 라우터는 manager의 프로세스 내 잠금으로 트랜잭션과 방송 큐 등록을 순차 처리한다.
@@ -382,21 +441,26 @@ DB 작업은 thread pool에서 실행하여 WebSocket 전송과 다른 비동기
 이 명령은 **개발용 HTTP 시뮬레이션**이고 실제 센서 관측 통계로 취급하지 않는다.
 
 ```bash
+sequence=${SENSOR_SEQUENCE:?Set the next device sequence}
 for occupied in false true true false; do
   curl --fail-with-body -sS -X POST http://localhost:8000/api/sensors/stall \
     -H 'Content-Type: application/json' \
-    -d "{\"device_id\":\"stall-a-01\",\"occupied\":$occupied}"
+    -H "Authorization: Bearer ${SENSOR_API_KEY:?Set the device-specific key}" \
+    -d "{\"device_id\":\"stall-a-01\",\"occupied\":$occupied,\"sequence\":$sequence}" || break
+  sequence=$((sequence + 1))
+  sleep 5
   echo
 done
 ```
 
-IoT는 같은 기기의 요청을 겹쳐 보내지 않고, 응답을 못 받으면 현재 안정화된 상태를 재전송한다.
-네트워크 단절은 DB 미반영을 뜻하지 않으며, 오래된 요청의 임의 재생까지 방지하는 API는 아니다.
+IoT는 같은 기기의 요청을 겹쳐 보내지 않는다. 새로운 상태는 새 번호를 부여하고 응답 유실 재시도는 원래 번호·상태를 유지한다.
+네트워크 단절은 DB 미반영을 뜻하지 않는다. 응답 유실은 동일 번호·동일 상태로 재시도한다.
+`sequence`를 재부팅 후에도 보존해야 하며, `429`에서는 `Retry-After`만큼 기다린다.
 
 ## WebSocket 실시간 업데이트
 
 `ws://localhost:8000/ws`에 연결하면 이후 모든 화장실의 변경을 받는다.
-인증 헤더·구독 메시지·application ping은 필요하지 않다. 클라이언트가 보내는 메시지는 무시한다.
+사용자 인증 헤더·구독 메시지·application ping은 필요하지 않다. 브라우저 Origin과 연결 수는 제한한다. 클라이언트가 보내는 메시지는 무시한다.
 이벤트는 UTF-8 JSON text frame이며 계약대로 다음 **7개 필드**를 포함한다.
 
 ```json
@@ -434,9 +498,9 @@ with connect("ws://localhost:8000/ws") as websocket:
 PY
 ```
 
-## 개발용 seed 실행
+## 디미고 시설 seed 실행
 
-환경변수와 PostgreSQL을 준비한 뒤 실행한다. 개발용 초기 상태이며 실제 센서 관측이나 과거 통계 데이터가 아니다.
+환경변수와 PostgreSQL을 준비한 뒤 실행한다. 실제 시설 정보이며 센서 관측이나 과거 통계를 꾸며내지 않는다.
 앱 시작이나 migration 과정에서 자동 실행되지 않는다.
 
 로컬 Python (저장소 루트에서):
@@ -451,19 +515,19 @@ Docker (저장소 루트에서):
 
 ```bash
 docker compose up -d --build --wait backend
-docker compose exec backend python -m app.seed
+docker compose run --rm migrate python -m app.seed
 ```
 
-최초 실행 시 화장실 3개, Stall 12개, Sensor 12개를 추가한다. 재실행 시 빠진 레코드만 추가한다.
-기존 `occupied`, `has_bidet`, `updated_at`, 센서 활성 상태, 위치 등은 덮어쓰지 않는다.
+최초 실행 시 화장실 8개, Stall 39개, Sensor 39개를 추가한다. 재실행 시 빠진 레코드를 추가하고 확인된 시설 매핑을 갱신한다.
+기존 occupied·updated_at·센서 순번·좌표는 보존한다. 이전 개발 화장실과 센서는 비활성화하며 이력은 유지한다.
 기존 이벤트도 보존하며 새로운 `SensorEvent`나 가짜 통계를 만들지 않는다.
 
-화장실은 `(name, building, floor)`, 칸은 `(restroom_id, stall_number)`, 센서는 `device_id`로 찾는다.
+화장실은 고유 `data_key`, 칸은 `(restroom_id, stall_number)`, 센서는 `device_id`로 찾는다.
 화장실 식별값이 중복되어 모호하거나 같은 device_id가 다른 칸에 연결되어 있으면 오류로 종료하고
 이번 실행 전체를 롤백한다. 동일 seed의 동시 실행은 PostgreSQL transaction advisory lock으로 순차 처리한다.
 다른 작업자가 식별값을 바꾸거나 데이터를 충돌되게 등록한 경우에는 seed가 임의로 병합·재연결하지 않는다.
 
-생성되는 이름·좌표·device_id·칸별 상태는 [`database/README.md`](../database/README.md#개발용-seed-데이터)에 있다.
+생성되는 이름·좌표·device_id·칸별 시설은 [디미고 인계](../docs/DIMIGO_GPS.md)에 있다.
 
 ## Database 및 API 통합 테스트
 
@@ -675,7 +739,7 @@ cd backend
 - 수정 파일: 루트 `README.md`, `backend/Dockerfile`, `backend/app/config.py`, `backend/app/main.py`,
   `backend/.env.example`, `backend/README.md`, `database/docker-compose.yml`, `database/README.md`.
 - 실행: `backend/.env` 준비 후 루트에서 `docker compose up`.
-  별도 터미널에서 `docker compose exec backend python -m app.seed`로 개발 데이터 생성.
+  별도 터미널에서 `docker compose run --rm migrate python -m app.seed`로 개발 데이터 생성.
   기존 `.env`와 `catchy-toilet_postgres_data` 볼륨을 그대로 사용한다.
 - 테스트: CORS 5개를 포함한 전체 **109개 통과**, 회귀 suite는 **1회** 실행.
   `docker compose config`, Docker 빌드·두 서비스 healthcheck, Alembic `0002 (head)`와 metadata 일치 확인.

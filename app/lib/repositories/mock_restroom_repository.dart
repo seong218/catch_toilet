@@ -77,7 +77,10 @@ class MockRestroomRepository extends RestroomRepository {
   @override
   Future<void> checkHealth() async {}
   @override
-  Future<List<Restroom>> getRestrooms(UserLocation location) async =>
+  Future<List<Restroom>> getRestrooms(
+    UserLocation location, {
+    String? gender,
+  }) async =>
       fixtures
           .map(
             (r) => r.withDistance(
@@ -100,6 +103,7 @@ class MockRestroomRepository extends RestroomRepository {
   Future<Recommendation> getRecommendation(
     UserLocation location, {
     required bool bidetRequired,
+    String? gender,
   }) async => Recommendation(
     restroom: await getDetail(bidetRequired ? 2 : 1, location),
     statisticsUsed: false,
