@@ -17,6 +17,7 @@ class ControlledRepository extends MockRestroomRepository {
   Future<Recommendation> getRecommendation(
     UserLocation location, {
     required bool bidetRequired,
+    String? gender,
   }) {
     final response = Completer<Recommendation>();
     requests.add((bidet: bidetRequired, response: response));
@@ -24,7 +25,7 @@ class ControlledRepository extends MockRestroomRepository {
   }
 
   @override
-  Future<List<Restroom>> getRestrooms(UserLocation location) {
+  Future<List<Restroom>> getRestrooms(UserLocation location, {String? gender}) {
     if (listFails) {
       throw const RepositoryException('서버에 연결할 수 없습니다.');
     }
@@ -48,11 +49,15 @@ class OverlappingRepository extends MockRestroomRepository {
   Future<Recommendation> getRecommendation(
     UserLocation location, {
     required bool bidetRequired,
+    String? gender,
   }) async => response(1);
   @override
   Stream<StallUpdate> get updates => events.stream;
   @override
-  Future<List<Restroom>> getRestrooms(UserLocation location) async {
+  Future<List<Restroom>> getRestrooms(
+    UserLocation location, {
+    String? gender,
+  }) async {
     if (heldList != null) {
       final pending = heldList!;
       heldList = null;
@@ -99,6 +104,7 @@ void main() {
       final repository = OverlappingRepository();
       final controller = AppController(
         repository,
+        locationService: selectedLocation(),
         eventDelay: const Duration(milliseconds: 10),
       );
       addTearDown(controller.dispose);
@@ -123,6 +129,7 @@ void main() {
       final repository = OverlappingRepository();
       final controller = AppController(
         repository,
+        locationService: selectedLocation(),
         eventDelay: const Duration(milliseconds: 10),
       );
       addTearDown(controller.dispose);
@@ -140,7 +147,10 @@ void main() {
     },
   );
   test('mock initial load and bidet option return scripted results', () async {
-    final controller = AppController(MockRestroomRepository());
+    final controller = AppController(
+      MockRestroomRepository(),
+      locationService: selectedLocation(),
+    );
     addTearDown(controller.dispose);
     await controller.refresh();
     expect(controller.restrooms.length, 3);
@@ -155,7 +165,10 @@ void main() {
     'late old-option response cannot overwrite the current choice',
     () async {
       final repository = ControlledRepository();
-      final controller = AppController(repository);
+      final controller = AppController(
+        repository,
+        locationService: selectedLocation(),
+      );
       addTearDown(controller.dispose);
       final original = controller.refreshRecommendation();
       final changed = controller.setBidetRequired(true);
@@ -171,7 +184,10 @@ void main() {
 
   test('recommendation 404 keeps list and bidet preference', () async {
     final repository = ControlledRepository();
-    final controller = AppController(repository);
+    final controller = AppController(
+      repository,
+      locationService: selectedLocation(),
+    );
     addTearDown(controller.dispose);
     final initial = controller.refresh();
     repository.requests.last.response.complete(response(0));
@@ -194,7 +210,10 @@ void main() {
 
   test('failed refresh retains list and a later retry recovers', () async {
     final repository = ControlledRepository();
-    final controller = AppController(repository);
+    final controller = AppController(
+      repository,
+      locationService: selectedLocation(),
+    );
     addTearDown(controller.dispose);
     final initial = controller.refresh();
     repository.requests.last.response.complete(response(0));
@@ -217,13 +236,16 @@ void main() {
   });
 
   test('changing origin invalidates detail and updates distances', () async {
-    final controller = AppController(MockRestroomRepository());
+    final controller = AppController(
+      MockRestroomRepository(),
+      locationService: selectedLocation(),
+    );
     addTearDown(controller.dispose);
     await controller.refresh();
     await controller.loadDetail(1);
-    expect(controller.details[1]!.distance, 20);
+    expect(controller.details[1]!.distance, isPositive);
     await controller.setLocation(
-      const UserLocation(label: '본관 1층', x: 30, y: 20),
+      const UserLocation(label: '테스트 GPS', longitude: 30, latitude: 20),
     );
     expect(controller.details, isEmpty);
     expect(controller.restrooms.first.distance, 0);
@@ -231,10 +253,19 @@ void main() {
 
   test('completing a request after disposal is safe', () async {
     final repository = ControlledRepository();
-    final controller = AppController(repository);
+    final controller = AppController(
+      repository,
+      locationService: selectedLocation(),
+    );
     final pending = controller.refreshRecommendation();
     controller.dispose();
     repository.requests.single.response.complete(response(0));
     await pending;
   });
 }
+
+// These tests exercise refreshes after the user has confirmed a location.
+LocationService selectedLocation() => LocationService()
+  ..setLocation(
+    const UserLocation(label: '테스트 기준 위치', latitude: 37.35, longitude: 126.84),
+  );

@@ -23,11 +23,12 @@ abstract class RestroomRepository {
   Future<void> connect();
   void suspend() {}
   Future<void> checkHealth();
-  Future<List<Restroom>> getRestrooms(UserLocation location);
+  Future<List<Restroom>> getRestrooms(UserLocation location, {String? gender});
   Future<Restroom> getDetail(int id, UserLocation location);
   Future<Recommendation> getRecommendation(
     UserLocation location, {
     required bool bidetRequired,
+    String? gender,
   });
   void dispose();
 }

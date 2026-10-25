@@ -7,6 +7,8 @@ coverage/
 .idea/
 *.iml
 .env
+.env.*
+!.env.example
 .tools/
 android/local.properties
 android/.gradle/

@@ -48,18 +48,14 @@ class RestroomCard extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 Text(
-                  restroom.availableStalls == 0
-                      ? '현재 빈칸 없음'
-                      : '빈칸 ${restroom.availableStalls} / ${restroom.totalStalls}',
+                  restroom.availabilityLabel,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 Text(distanceLabel(restroom.distance)),
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              '비데 빈칸 ${restroom.availableBidetStalls}개 · 전체 ${restroom.totalStalls}칸',
-            ),
+            Text(restroom.facilityLabel),
           ],
         ),
       ),

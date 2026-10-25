@@ -34,6 +34,11 @@ bool boolean(Json json, String key) {
   return value;
 }
 
+bool? nullableBoolean(Json json, String key) {
+  if (!json.containsKey(key)) throw FormatException('Missing field: $key');
+  return json[key] == null ? null : boolean(json, key);
+}
+
 String string(Json json, String key) {
   final value = json[key];
   if (value is! String || value.trim().isEmpty) {

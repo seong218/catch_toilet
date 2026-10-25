@@ -14,6 +14,10 @@ dependencies:
   http: ^1.6.0
   web_socket_channel: ^3.0.3
   cupertino_icons: ^1.0.9
+  geolocator: ^14.1.2
+  # iOS teardown fix: third_party/kakao_map_sdk/LOCAL_PATCH.md
+  kakao_map_sdk:
+    path: third_party/kakao_map_sdk
 
 dev_dependencies:
   flutter_test:
@@ -22,3 +26,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/info/
+    - assets/images/branding/logo.png

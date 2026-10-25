@@ -11,6 +11,7 @@ COPY app ./app
 COPY alembic.ini .
 COPY alembic ./alembic
 COPY docker-start.sh .
+COPY docker-migrate.sh .
 
 RUN useradd --create-home appuser
 USER appuser

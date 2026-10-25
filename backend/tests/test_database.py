@@ -67,16 +67,16 @@ class DatabaseTests(unittest.TestCase):
         command.downgrade(self.config, "base")
         self.assertEqual(inspect(self.connection).get_table_names(), ["alembic_version"])
         command.upgrade(self.config, "head")
-        self.assertEqual(self.connection.scalar(text("SELECT version_num FROM alembic_version")), "0002")
+        self.assertEqual(self.connection.scalar(text("SELECT version_num FROM alembic_version")), "0005")
         self.assertEqual(
             compare_metadata(MigrationContext.configure(self.connection), Base.metadata), []
         )
 
     def test_columns_separate_current_state_from_historical_counts(self):
         expected = {
-            "restrooms": {"id", "name", "building", "floor", "x", "y", "created_at"},
-            "stalls": {"id", "restroom_id", "stall_number", "occupied", "has_bidet", "updated_at"},
-            "sensors": {"id", "device_id", "restroom_id", "stall_id", "sensor_type", "active"},
+            "restrooms": {"id", "name", "building", "floor", "x", "y", "created_at", "latitude", "longitude", "gender", "location_source", "bidet_stalls", "accessible_stalls", "data_key", "is_active"},
+            "stalls": {"id", "restroom_id", "stall_number", "occupied", "has_bidet", "updated_at", "is_accessible"},
+            "sensors": {"id", "device_id", "restroom_id", "stall_id", "sensor_type", "active", "last_sequence", "last_occupied"},
             "sensor_events": {"id", "sensor_id", "event_type", "value", "created_at"},
             "restroom_snapshots": {
                 "id", "restroom_id", "total_stalls", "available_stalls",
@@ -89,13 +89,58 @@ class DatabaseTests(unittest.TestCase):
             with self.subTest(table=table):
                 columns = inspector.get_columns(table)
                 self.assertEqual({column["name"] for column in columns}, names)
-                self.assertTrue(all(not column["nullable"] for column in columns))
+                nullable = {"restrooms": {"latitude", "longitude", "bidet_stalls", "data_key"},
+                            "stalls": {"occupied", "has_bidet"}}.get(table, set())
+                self.assertEqual({column["name"] for column in columns if column["nullable"]}, nullable)
+
+    def test_accessibility_migration_backfills_only_unknown_values(self):
+        self.db.close()
+        command.downgrade(self.config, "0004")
+        restroom_id = self.connection.scalar(text(
+            "INSERT INTO restrooms (name, building, floor, x, y) "
+            "VALUES ('test', 'test', 1, 0, 0) RETURNING id"
+        ))
+        self.connection.execute(text(
+            "INSERT INTO stalls (restroom_id, stall_number, occupied, has_bidet, is_accessible) "
+            "VALUES (:room, 1, NULL, NULL, NULL), "
+            "(:room, 2, true, false, true), (:room, 3, false, true, false)"
+        ), {"room": restroom_id})
+        existing_fields = text(
+            "SELECT id, restroom_id, stall_number, occupied, has_bidet, updated_at "
+            "FROM stalls ORDER BY id"
+        )
+        before = self.connection.execute(existing_fields).all()
+
+        command.upgrade(self.config, "head")
+        self.assertEqual(self.connection.execute(existing_fields).all(), before)
+        self.assertEqual(self.connection.scalars(text(
+            "SELECT is_accessible FROM stalls ORDER BY stall_number"
+        )).all(), [False, True, False])
+        column = next(column for column in inspect(self.connection).get_columns("stalls")
+                      if column["name"] == "is_accessible")
+        self.assertFalse(column["nullable"])
+        self.assertEqual(column["default"], "false")
+        # Raw SQL omits the field, so this verifies the database default itself.
+        self.assertIs(self.connection.scalar(text(
+            "INSERT INTO stalls (restroom_id, stall_number) "
+            "VALUES (:room, 4) RETURNING is_accessible"
+        ), {"room": restroom_id}), False)
+        after = self.connection.execute(text("SELECT * FROM stalls ORDER BY id")).all()
+
+        command.downgrade(self.config, "0004")
+        self.assertEqual(self.connection.execute(text("SELECT * FROM stalls ORDER BY id")).all(), after)
+        column = next(column for column in inspect(self.connection).get_columns("stalls")
+                      if column["name"] == "is_accessible")
+        self.assertTrue(column["nullable"])
+        self.assertIsNone(column["default"])
+        command.upgrade(self.config, "head")
+        self.assertEqual(self.connection.execute(text("SELECT * FROM stalls ORDER BY id")).all(), after)
 
     def test_snapshot_migration_preserves_initial_data(self):
-        command.downgrade(self.config, "0001")
         self.make_graph()
         before = self.snapshot()
         self.db.commit()  # Release only this Session's savepoint, never the outer test transaction.
+        command.downgrade(self.config, "0001")
         command.upgrade(self.config, "head")
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.db.scalars(select(RestroomSnapshot)).all(), [])
@@ -108,7 +153,7 @@ class DatabaseTests(unittest.TestCase):
 
     def test_relationships_defaults_and_timestamps(self):
         restroom, stall, sensor, event = self.make_graph()
-        self.db.add(Stall(restroom=restroom, stall_number=2, has_bidet=True))
+        self.db.add(Stall(restroom=restroom, stall_number=2, has_bidet=True, is_accessible=True))
         self.db.add(Sensor(
             restroom=restroom, stall=stall, device_id="TEST-device", sensor_type="SW-520D"
         ))
@@ -125,6 +170,8 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual({e.value for e in sensor.events}, {True, False})
         self.assertFalse(stall.occupied)
         self.assertFalse(stall.has_bidet)
+        self.assertIs(stall.is_accessible, False)
+        self.assertIs(restroom.stalls[1].is_accessible, True)
         self.assertTrue(sensor.active)
         for timestamp in (restroom.created_at, stall.updated_at, event.created_at):
             self.assertIsNotNone(timestamp.utcoffset())
@@ -183,6 +230,10 @@ class DatabaseTests(unittest.TestCase):
             insert(SensorEvent).values(sensor_id=sensor.id, event_type="occupancy_changed", value=None),
             sqlstate="23502",
         )
+        self.assert_rejected(
+            insert(Stall).values(restroom_id=restroom.id, stall_number=2, is_accessible=None),
+            sqlstate="23502",
+        )
 
     def test_history_prevents_parent_deletion(self):
         restroom, stall, sensor, _ = self.make_graph()
@@ -214,7 +265,8 @@ class DatabaseTests(unittest.TestCase):
     def snapshot(self):
         return {
             model.__tablename__: self.db.execute(
-                select(model.__table__).order_by(model.id)
+                select(*(column for column in model.__table__.columns
+                         if column.name not in {"last_sequence", "last_occupied", "latitude", "longitude", "gender", "location_source", "bidet_stalls", "accessible_stalls", "data_key", "is_active", "is_accessible"})).order_by(model.id)
             ).all()
             for model in (Restroom, Stall, Sensor, SensorEvent)
         }

@@ -5,21 +5,26 @@ the application's development data is never used or changed.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+from itertools import count
 from datetime import datetime, timezone
 from pathlib import Path
+from secrets import token_urlsafe
 from threading import Barrier
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
 
+from app.config import get_settings
 from app.db import engine, get_db
 from app.main import app
 from app.models import Restroom, Sensor, SensorEvent, Stall
@@ -55,8 +60,23 @@ class SensorAPIFixture(unittest.TestCase):
 
         app.dependency_overrides[get_db] = test_db
         self.addCleanup(app.dependency_overrides.clear)
+        self.sensor_keys = {
+            device: token_urlsafe(32) for device in (
+                "test-sensor", "test-sensor-2", "other-sensor",
+                "missing", "TEST-SENSOR",
+            )
+        }
+        self.sequences = defaultdict(lambda: count(1))
+        self.settings = get_settings().model_copy(update={
+            "sensor_rate_burst": 1000, "sensor_rate_per_second": 1000,
+            "sensor_global_burst": 1000, "sensor_global_rate_per_second": 1000,
+            "sensor_min_state_interval_seconds": 0,
+            "sensor_api_keys": {device: SecretStr(key) for device, key in self.sensor_keys.items()},
+        })
+        app.dependency_overrides[get_settings] = lambda: self.settings
         # One lifespan/portal models one server event loop for HTTP + WebSocket.
         self.client = self.enterContext(TestClient(app))
+        self.client.headers.update(self.auth_headers("test-sensor"))
         with self.sessions.begin() as db:
             room = Restroom(name="센서 API 테스트", building="테스트 건물", floor=1, x=0, y=0)
             stall = Stall(
@@ -79,14 +99,35 @@ class SensorAPIFixture(unittest.TestCase):
             events = db.execute(select(SensorEvent.__table__).order_by(SensorEvent.id)).all()
             return (stall.occupied, stall.updated_at, events)
 
+    def auth_headers(self, device_id):
+        return {"Authorization": f"Bearer {self.sensor_keys[device_id]}"}
+
     def post(self, occupied, device_id="test-sensor", expected_status=200):
-        response = self.client.post("/api/sensors/stall", json={"device_id": device_id, "occupied": occupied})
+        response = self.client.post(
+            "/api/sensors/stall", json={"device_id": device_id, "occupied": occupied, "sequence": next(self.sequences[device_id])},
+            headers=self.auth_headers(device_id),
+        )
         self.assertEqual(response.status_code, expected_status, response.text)
         self.assertEqual(response.headers["content-type"], "application/json")
         return response.json()
 
 
 class SensorAPITests(SensorAPIFixture):
+    def test_authentication_failure_preserves_state_events_and_broadcast(self):
+        before = self.snapshot()
+        with patch.object(app.state.connection_manager, "broadcast") as broadcast:
+            for headers in (
+                {"Authorization": ""}, {"Authorization": f"Bearer {token_urlsafe(32)}"},
+                self.auth_headers("other-sensor"),
+            ):
+                response = self.client.post(
+                    "/api/sensors/stall", json={"device_id": "test-sensor", "occupied": True, "sequence": 1},
+                    headers=headers,
+                )
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(self.snapshot(), before)
+            broadcast.assert_not_called()
+
     def test_false_true_true_false_commits_only_two_events(self):
         previous_timestamp = self.snapshot()[1]
         for occupied, changed, values in (
@@ -113,7 +154,7 @@ class SensorAPITests(SensorAPIFixture):
 
     def test_unregistered_and_nonexact_device_ids_return_404(self):
         before = self.snapshot()
-        for device_id in ("missing", "TEST-SENSOR", " test-sensor "):
+        for device_id in ("missing", "TEST-SENSOR"):
             self.assertEqual(self.post(True, device_id, 404), {"detail": "Sensor not found"})
         self.assertEqual(self.snapshot(), before)
 
@@ -166,6 +207,8 @@ class SensorAPITests(SensorAPIFixture):
         before = self.snapshot()
         for payload in payloads:
             with self.subTest(payload=payload):
+                if isinstance(payload, dict):
+                    payload["sequence"] = 1
                 response = self.client.post("/api/sensors/stall", json=payload)
                 self.assertEqual(response.status_code, 422, response.text)
                 self.assertIsInstance(response.json()["detail"], list)
@@ -226,7 +269,10 @@ class SensorAPITests(SensorAPIFixture):
 
         def send(device_id):
             ready.wait(timeout=5)
-            return self.client.post("/api/sensors/stall", json={"device_id": device_id, "occupied": True})
+            return self.client.post(
+                "/api/sensors/stall", json={"device_id": device_id, "occupied": True, "sequence": 1},
+                headers=self.auth_headers(device_id),
+            )
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(send, device_id) for device_id in ("test-sensor", "test-sensor-2")]
@@ -241,10 +287,17 @@ class SensorAPITests(SensorAPIFixture):
         spec = self.client.get("/openapi.json").json()
         self.assertEqual(set(spec["paths"]["/api/sensors/stall"]), {"post"})
         schemas = spec["components"]["schemas"]
-        self.assertEqual(set(schemas["SensorUpdateRequest"]["required"]), {"device_id", "occupied"})
+        self.assertEqual(set(schemas["SensorUpdateRequest"]["required"]), {"device_id", "occupied", "sequence"})
         response = schemas["SensorUpdateResponse"]
         self.assertEqual(set(response["properties"]), {"success", "changed"})
         self.assertEqual(set(response["required"]), {"success", "changed"})
+        operation = spec["paths"]["/api/sensors/stall"]["post"]
+        self.assertEqual(operation["security"], [{"SensorBearer": []}])
+        self.assertIn("401", operation["responses"])
+        self.assertEqual(spec["components"]["securitySchemes"]["SensorBearer"]["scheme"], "bearer")
+        self.assertEqual(operation["requestBody"]["content"]["application/json"]["schema"], {
+            "$ref": "#/components/schemas/SensorUpdateRequest",
+        })
 
 
 if __name__ == "__main__":

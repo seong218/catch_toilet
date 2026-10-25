@@ -20,7 +20,7 @@ class WebSocketAPITests(sensor_tests.SensorAPIFixture):
             "type": "stall.updated", "restroom_id": self.room_id,
             "stall_id": self.stall_id, "occupied": occupied,
             "total_stalls": 1, "available_stalls": int(not occupied),
-            "available_bidet_stalls": int(not occupied),
+            "available_bidet_stalls": int(not occupied), "unknown_stalls": 0, "simulated_stalls": 0, "is_simulated": False,
         }
 
     def test_recommendation_changes_after_committed_sensor_event(self):
@@ -44,7 +44,7 @@ class WebSocketAPITests(sensor_tests.SensorAPIFixture):
             self.assertEqual({key: value for key, value in detail.items() if key != "stalls"}, listed)
             self.assertEqual(detail["stalls"], [{
                 "id": self.stall_id, "stall_number": 1,
-                "occupied": occupied, "has_bidet": True,
+                "occupied": occupied, "has_bidet": True, "is_accessible": False, "is_simulated": False,
             }])
             for bidet_required in ("false", "true"):
                 response = self.client.get("/api/restrooms/recommend", params={
@@ -114,7 +114,7 @@ class WebSocketAPITests(sensor_tests.SensorAPIFixture):
                 self.assertEqual(client.receive_json(), {
                     "type": "stall.updated", "restroom_id": other_id, "stall_id": other_stall_id,
                     "occupied": occupied, "total_stalls": 1,
-                    "available_stalls": int(not occupied), "available_bidet_stalls": int(not occupied),
+                    "available_stalls": int(not occupied), "available_bidet_stalls": int(not occupied), "unknown_stalls": 0, "simulated_stalls": 0, "is_simulated": False,
                 })
                 updated = recommendation()
                 self.assertEqual(updated["id"], expected_id)

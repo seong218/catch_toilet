@@ -1,0 +1,322 @@
+## 1.3.1
+* **Support merging overlapping Polygon holes on Android and iOS.**
+  ```dart
+  final position = MapPoint(
+    polygonPoints,
+    mergeOverlappingHoles: true,
+  );
+  ```
+  * Add the `mergeOverlappingHoles` option to `MapPoint`, `CirclePoint` and `RectanglePoint`.
+  * Add `BasePoint.setMergeOverlappingHoles()` to change the option after creating a point.
+  * Merge holes that overlap or share vertices or edges when creating a Polygon or changing its position.
+  * Preserve the option when serializing or copying shape points.
+* Update version of base Android SDK from v2.13.5 to v2.15.2.
+* Update version of base iOS SDK to v2.12.19 for CocoaPods and Swift Package Manager.
+* **Improve invalid native-call handling on Android and iOS.**
+  * Return `INVALID_NATIVE_CALL` as a `FlutterError` instead of allowing Android handler exceptions to terminate the application.
+  * Reject iOS map-dependent calls made before map readiness or after map destruction.
+  * Guard missing iOS LabelLayer, LodLabelLayer, POI, WaveText, Shape, Route and tracking resources before SDK access.
+  * Guard missing target POIs and Shapes used by iOS shared-position and shared-transform operations.
+* Change Web `CirclePoint` and `RectanglePoint` dimensions to real-world distances for parity with iOS. ([#69](https://github.com/gunyu1019/flutter_kakao_maps/pull/69))
+  * Apply the iOS-compatible primitive scale when converting relative points to geographic coordinates.
+  * Increase the default Web circle resolution from 360 to 720 vertices.
+  * Document that Android continues to interpret `RectanglePoint` dimensions in pixels.
+* Simplify Web shape and DimScreen event handling by removing redundant `bounds_changed` listeners.
+* [Fix] (Android / iOS) Align the `canShowPosition` method name with the Dart channel contract.
+* [Fix] (Android / iOS) Send `removeShareTransformPoi` with `targetPoiId` and the matching native method name.
+* [Fix] (Android / iOS) Complete `setEventHandler` method-channel calls after registering listeners.
+* [Fix] (Android / iOS) Send POI creation transforms using the `transformMethod` key expected by both native converters.
+* [Fix] (Android / iOS) Normalize an absent POI text value before `Poi.invalidate()` reaches native string conversion.
+* [Fix] Use the newly appended style index when serializing secondary `MultipleRoute` styles.
+* [Fix] Forward badge ID, z-order and initial visibility to native platforms and retain the visibility in the Dart `Badge` instance.
+* [Fix] (Android) Complete `setBuildingHeightScale` calls with a success result.
+* [Fix] (Android) Read the LabelLayer z-order from the `zOrder` argument instead of the visibility argument.
+* [Fix] **(Android / iOS) Add temporary platform-specific workarounds for `showAllPolylineText()` and `hideAllPolylineText()`, whose native implementations do not work correctly.**
+  * On Android, use the LabelLayer bulk visibility methods and disable label logging to avoid the SDK null-pointer exception caused by iterating over PolylineText overlays.
+  * On iOS, show or hide each WaveText individually because the SDK bulk visibility methods do not take effect.
+* [Fix] (iOS) Align the tracking rotation and POI pixel-offset method names with the Dart channel contract.
+* [Fix] (iOS) Complete map-type and shared-transform method-channel calls with a success result.
+* [Fix] (iOS) Remove map-coordinate and relative-coordinate polyline or polygon shapes through the matching SDK API.
+* [Fix] (iOS) Apply the requested initial visibility when adding a POI badge.
+* [Fix] (iOS) Read POI text transition, padding, LabelLayer ordering and combined text-gravity values from the correct fields.
+* [Fix] (iOS) Read `isConsecutive` from camera animation options.
+* [Fix] (iOS) Preserve route patterns for primary and secondary per-level styles, including `pinStart`.
+* [Fix] (iOS) Read scale-bar fade-in, fade-out and retention times from their individual fields.
+* [Fix] (iOS) Preserve native error type, message and error code in map error callbacks and map authentication failures consistently.
+* [Fix] (iOS) Show newly added routes immediately.
+* [Fix] (iOS) Emit the map-destroy callback only once and avoid duplicate engine cleanup during view deinitialization.
+* [Fix] (Web Environment) Use the correct polygon collection when changing polygon visibility.
+* [Fix] (Web Environment) Correct RGB channel scaling for PolylineText rendering.
+
+## 1.3.0
+* **Support `PolylineText` overlay on Web Platform.** ([#60](https://github.com/gunyu1019/flutter_kakao_maps/pull/60))
+
+<table>
+  <tr>
+    <th rowspan="2">Native Platform (iOS)</th>
+    <th colspan="3">Web Platform</th>
+  </tr>
+  <tr>
+    <th>Scale (100m)</th>
+    <th>Scale (50m)</th>
+    <th>Scale (30m)</th>
+  </tr>
+  <tr>
+    <td>
+      <img alt="PolylineText on iOS" src="https://github.com/user-attachments/assets/6279dd5b-1769-4edb-84cf-af0e8e261520" height="420"/>
+    </td>
+    <td>
+      <img alt="PolylineText on Web at 100m scale" src="https://github.com/user-attachments/assets/ccbd0c43-f4ec-46bf-b61e-5e26f7d420d8" height="420"/>
+    </td>
+    <td>
+      <img alt="PolylineText on Web at 50m scale" src="https://github.com/user-attachments/assets/1694a40f-1fe9-4d97-8815-2609043520d6" height="420"/>
+    </td>
+    <td>
+      <img alt="PolylineText on Web at 30m scale" src="https://github.com/user-attachments/assets/167153ff-1d5a-41cb-9b5c-1a4f7a1dd044" height="420"/>
+    </td>
+  </tr>
+</table>
+
+* **Support `DimScreenController` on Web Platform.** ([#64](https://github.com/gunyu1019/flutter_kakao_maps/pull/64))
+  * Support color, visibility and cover type configurations.
+  * Support highlighted areas based on `MapPoint`, `CirclePoint` and `RectanglePoint`.
+  * Support holes, open paths and polygon stroke styles.
+  * Apply DimScreen effects to Poi, custom label and PolylineText overlays.
+
+<table>
+  <tr>
+    <th>Native Platform (Android)</th>
+    <th>Native Platform (iOS)</th>
+    <th>Web Platform</th>
+  </tr>
+  <tr>
+    <td>
+      <img alt="DimScreen on Android" src="https://github.com/user-attachments/assets/51936c55-0405-4347-87cb-40787ff6fab4" height="420"/>
+    </td>
+    <td>
+      <img alt="DimScreen on iOS" src="https://github.com/user-attachments/assets/73fd37b8-b866-44b7-878c-3d4df6898669" height="420"/>
+    </td>
+    <td>
+      <img alt="DimScreen on Web" src="https://github.com/user-attachments/assets/c22d6936-c89b-4e5e-a713-248565a61e6a" height="420"/>
+    </td>
+  </tr>
+</table>
+
+* Add `KakaoMapController.getBounds` function to retrieve the currently visible map area. ([#58](https://github.com/gunyu1019/flutter_kakao_maps/pull/58))
+  ```dart
+  final bounds = await controller.getBounds(context);
+  final rect = bounds?.toRect();
+  ```
+  * Add `LatLngBounds` object containing `ne`, `nw`, `se` and `sw` coordinates.
+  * Add `LatLngBounds.toRect` function to generate a `rect` parameter for Kakao REST APIs.
+  * Improve bounds calculation for rotated viewports and temporarily unavailable native results.
+* Update version of base Android SDK from v2.12.18 to v2.13.5.
+* Migrate Android Gradle build scripts from Groovy to Kotlin DSL.
+* [Fix] **(Android) Map freezes after returning from the background. ([#61](https://github.com/gunyu1019/flutter_kakao_maps/pull/61))**
+  * Add `recoverAndroidGLSurfaceViewOnResume` for non-destructive recovery.
+  * Preserve previously registered overlays during recovery.
+  * Add `recreateAndroidMapViewOnResume` as an emergency fallback.
+  * Add `androidMapViewRecreationDelay` to configure the fallback delay.
+* [Fix] (Android) Route styles are not applied when updating route points. ([#66](https://github.com/gunyu1019/flutter_kakao_maps/pull/66))
+* [Fix] (Android) Invalid visibility payload of LabelLayer and LodLabelLayer.
+* [Fix] (Android / iOS) Invalid conversion of mixed `CirclePoint` and `RectanglePoint` holes.
+* [Fix] (iOS) Runtime error caused by `NSNull` values in optional PoiIconStyle and PoiBadge images. ([#63](https://github.com/gunyu1019/flutter_kakao_maps/pull/63))
+* [Fix] (iOS) Invalid removal of DimScreen highlight polygon.
+* [Fix] (iOS) Invalid PolylineText visibility, style update and removal behavior.
+* [Fix] (Web Environment) Map center changes when resizing the map container.
+* [Fix] (Web Environment) Invalid gesture type in an iOS browser.
+* [Fix] (Web Environment) Invalid polygon and relative shape rendering.
+* [Fix] (Web Environment) Overlay collections and event listeners are not disposed when the map element is removed.
+* [Fix] Correct method names from `getRotueStyle()` and `getMultipleRotueStyle()` to `getRouteStyle()` and `getMultipleRouteStyle()`.
+* [Fix] Invalid raw values of `DimScreenCover` on Android and iOS Platforms.
+
+## 1.2.6
+* [Fix] Missing `zoomLevel` field in `CameraUpdate.newCenterPoint` factory function.
+* [Fix] Invalid event name of terrain clicked event on iOS Platform. ([#56](https://github.com/gunyu1019/flutter_kakao_maps/issues/56))
+
+## 1.2.5
+* Add `copyWith` function in user-defined object to copy the instance with modified parameters.
+* Override `==` operator and `hashCode` function in user-defined object. 
+* [Fix] Missing definition parameter for `tiltAngle`, `rotationAngle` and `height` in `CameraPosition` object. ([#55](https://github.com/gunyu1019/flutter_kakao_maps/issues/55))
+
+## 1.2.4
+* [Fix] Missing alpha of color feature in iOS Platform ([#54](https://github.com/gunyu1019/flutter_kakao_maps/issue/54))
+* [Fix] Not apply specific id of overlay in web environment
+* [Fix] Missing poi icon in web environment
+* [Fix] (Example) Fix the bottom clipping issue in Android Platform.
+
+## 1.2.3
+* [Fix] Improve leak memory situation in iOS Platform ([#51](https://github.com/gunyu1019/flutter_kakao_maps/issues/51))
+
+## 1.2.2
+* [Fix] Fix no implementation found for method exception ([#46](https://github.com/gunyu1019/flutter_kakao_maps/issues/49))
+
+## 1.2.1
+* [Fix] Invalid parameter type on Poi.move feature. ([#46](https://github.com/gunyu1019/flutter_kakao_maps/issues/46))
+
+## 1.2.0
+* Support SPM(Swift Package Manager) since v1.2
+* Add `DimScreenController` to cover the map with a specifc color.
+  ```dart
+  await controller.dimScreen.setColor(Colors.grey.withAlpha(80));
+  await controller.dimScreen.setVisible(true);
+  ```
+* Add `TrackingController` to track Poi with the camera
+  ```dart
+  final poi = await controller.labelLayer.addPoi(...);
+  controller.tracking.poi = poi;
+  await controller.tracking.start();
+  ```
+* Add `OverlayRegistrationFailedError` and `OverlayStyleRegistrationFailedError` exception to prevent `NullPointerException` when overlay registration fails.
+* Add `Badge` to display another image near the Poi.
+  ```dart
+  final poi = await controller.labelLayer.addPoi(...);
+  final badge = await poi.addBadge(
+    KImage.fromAeest("ICON ASSET PATH"), 0.5, 0.5
+  );
+  ```
+* Add `Poi.addShareTransform` function to share transform data with other poi or shapes.
+* Add `Poi.addSharePosition` function to share location data with other poi.
+* Add `Poi.movePath` function to move poi following the defined path.
+* Improved data structuring to overlay in web environment.
+* [Fix] Remove usused `duration` parameter in `LodPoi.show` function
+* [Fix] Invalid zoomLevel from `controller.getCameraPosition()` function in web environment.
+* [Fix] Not applicable to other poi icons on zoom level in web environment.
+* [Fix] Not applied the pre-specified ID of route in web environment.
+
+## 1.1.4 
+* Update version of base SDK (to v2.12.14 in Android / to v2.12.5 in iOS)
+* [Fix] (Web Environment) Ignored Z-Index attribute Kakao Map View in canvas mode ([#23](https://github.com/gunyu1019/flutter_kakao_maps/issues/23))
+* [Fix] (Web Environment) Resolve type 'List<dynamic>' is not a subtype of type 'List<LatLng>' in `CameraUpdate.fromMessageable` factory function.
+* [Fix] (Web Environment) Cannot move camera without animation option.
+
+## 1.1.3
+* [Fix] (Android) Automatic bring map to front when open app from lock screen ([#14](https://github.com/gunyu1019/flutter_kakao_maps/issues/14))
+  * Implement a function that can be called in lifecycle.
+  * Apply other engine that can render between Dart and Android View.
+* [Fix] Invaild pre-added style check condition in overlay addition function ([#24](https://github.com/gunyu1019/flutter_kakao_maps/issues/24))
+
+## 1.1.2
+* [Fix] Invalid method called in `KImage.fromWidget.` ([#22](https://github.com/gunyu1019/flutter_kakao_maps/issues/22))
+
+## 1.1.1
+* Add calling `mapView.finish()` function in Map View on Android.
+* [Fix] Fix `NoSuchMethodError` in Map View on Android ([#21](https://github.com/gunyu1019/flutter_kakao_maps/issues/21))
+* [Fix] Fix Poi registration failed exception with text-only style on Web.
+
+## 1.1.0
+* **Support Kakao Map SDK on Web Platform**
+* Add `KImage.fromWidget` to render the widget as an image element used on Poi Icon, Route Pattern Image, etc...<br/>
+  ```dart
+  final icon = await KImage.fromWidget(const Text("텍스트"), Size(100, 40));
+  final poiStyle = PoiStyle(icon: icon);
+  ...
+  ```
+* Add `offset()` and `distance()` function in LatLng object to measure the distance of two point.<br/>
+  ```dart
+  final point1 = const LatLng(latitude1, longitude1);
+  final point2 = const LatLng(latitude2, longitude2);
+  point1.distance(point2); // Return the distacne of two points.
+  ...
+  ```
+* Add `addRetangleHole`, `addCircleHole` function in instance extended `DotPoint` object.
+  ```dart
+  final point = CirclePoint(radius: 300);
+  point.addCircleHole(radius: 200); // Add circle hole with a radius of 200 meters.
+  ...
+  ```
+* Add `otherStyles`, `otherStyleLevel`, and `otherStyleCount` field in `PoiStyle`, `PolygonStyle`, `PolylineStyle` and `RouteStyle`.
+* Add `multiple` field in `Route`, `MultipleRoute` to seperate two type of route.
+* Add `remove` function in Polyline Shape, Polygon Shape.
+* [Fix] Rename `style` field from `styles` in `LodPoi` to unify the structure of `Poi`.
+* [Fix] Missing `text` parameter in `Poi.setText`.
+* [Fix] A runtime error occurs when adding a `MultipleRoute` overlay.
+* [Fix] Adjust screen point returned by the `onCameraMoveEnd` event from relative pixels to absolute pixels on iOS Platform. ([#16](https://github.com/gunyu1019/flutter_kakao_maps/issues/16))
+* [Fix] Invalid raw value of Gestrue Type returned by the `onCameraMoveEnd` event on iOS Platform ([#20](https://github.com/gunyu1019/flutter_kakao_maps/issues/20))
+
+## 1.0.2
+* Support Pro-Motion display mode in iOS Platform.
+* Apply resizing capabilities in `addViewSucceeded` event handler to onnection and resize duplicate event on iOS platform.
+* [Fix] Invaild extended type in KPoint.
+* [Fix] Missing engine activation due to network error on iOS platform. ([#15](https://github.com/gunyu1019/flutter_kakao_maps/issues/15))
+* [Fix] Adjust screen point to absolute pixels on iOS platform.
+
+## 1.0.1
+* The padding, zoomLevel parameters in CameraUpdate.fitMapPoints are no longer required.
+* [Fix] Invalid type of CameraUpdate.fitMapPoints
+* [Fix] Remake CameraUpdate.fitMapPoints parts in CameraTypeConvertType.swift to avoid Swift Compiling Error ([#12](https://github.com/gunyu1019/flutter_kakao_maps/issues/12))
+
+## 1.0.0
+This is first stable version of Kakao Map SDK (Flutter Plugin)
+A Kakao Map SDK was planned in October 25th, and development began on November 26th.
+I completed the implementation of the Kakao Map SDK on Android platform in early January and in February, I worked on the implementation for iOS platform.
+Finally, after testing in all platforms, I officially released the Kakao Map SDK.
+
+* Implement the native based Kakao Map view.
+* Support all features of overlay in Android, iOS platform.
+  * Poi, Lod Poi (Level of detail Poi), Polyline Text
+  * Polyline Shape, Polygon shape
+  * Route, Multiple Route
+* Support all features of camera controls in Android, iOS platform.
+
+## 0.2.0-dev.5
+* Support all feature related Shape in iOS and Android Platform.
+  * Support point based position.
+  * Modifiy Polyline Shape
+  * Modifiy Polygon Shape
+  * Setup visible of shape layer
+* Support all feature related Route in iOS and Android Platform.
+  * Add Route
+  * Modify Route
+  * Implement Route Converter
+  * Setup visible of route layer
+* Implement modify label layer and lod label layer in Android Platform
+* [Fix] Missing filled polyline shape style ID, polygon shape style ID, and route style ID.
+* Integrate modify logic of polyline shape and polygon shape
+* Integrate modify logic of route line
+
+## 0.2.0-dev.4
+* Add zOrder attribute at PolygonShape and PolylineShape.
+* Support some feature Polyline Shape and Polygon Shape in iOS Platform.
+  * Add Polyline Shape / Polygon Shape
+  * Implement Shape Converter(DotPoints, PolylineStyle, PolygonStyle)
+
+## 0.2.0-dev.3
+* Support all feature related Poi in iOS Platform.
+  * Add and remove LodPoi or LodLabelLayer
+  * Add and remove PolylineText
+  * Modify Poi.
+  * Implement Label Converter (WaveTextStyle, WaveTextOption)
+* [Fix] Missing feature autoMove parameter in Poi.show() method
+* [Fix] Missing feature transition parameter in Poi.changestyle(), Poi.changeText() method
+
+## 0.2.0-dev.2
+* Support some feature related Poi in iOS Platform.
+  * Add and remove Poi or LabelLayer.
+  * Implement Label Converter(PoiTextStyle, PoiIconStyle, PoiOptions ... etc).
+* Add `setGestureEnable` method in iOS Platform.
+* Implement `onCameraMoveStart` and `onCameraMoveEnd` event handler.
+* Implement Reference Converter(UIColor, UIImage) to cast swift instance from dart instance.
+* Configure `buildingHeightScale` property to not be required awaitable.
+* Apply MapGravity at Poi.textGravity property.
+* Rename default view name on iOS Platform for integration Android default view name
+* [Fix] Invaild raw value in MapGravity enumeration
+* [Fix] Invaild keyword in transition from enterence to entrance
+* [Fix] Adjust default aspectRatio property in PoiTextStyle
+* [Fix] Adjust default clickable parameter in LabelController.addPoi and LodLabelController.addLodPoi.
+
+## 0.2.0-dev.1
+* Implement Kakao Map View to iOS Platform
+  * Kakao Map Lifecycle in native environment
+  * Support responsive frame
+  * Split delegate instance to `KakaoMapViewDelegate.swift`
+* Implement Kakao Map Plugin in iOS Platform (based cocoapod)
+  * Implement converter (PrimitiveTypeConverter, CameraTypeConverter) with extension and internal function.
+  * Implement `MapviewType` object to setup kakao map with extension.
+* Implement some feature in Kakao Map Controller
+  * `moveCamera` method to control camera looking at a kakao map.
+  * `getCameraPosition` method to get camera position looking at a kakao map.
+* Implement `SDKInitializer` class in iOS Platform
+
+## 0.1.0-dev.5
+* Initial Deployment (Implement Kakao Map to Android Platform)

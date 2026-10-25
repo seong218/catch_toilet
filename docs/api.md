@@ -1,5 +1,41 @@
 # Catchy Toilet API Contract — MVP
 
+## PC 상태 시뮬레이션 (2026-10-25)
+
+- 실제 센서가 부족할 때 PC에서 칸별 사용 상태를 임시 지정한다. 시설 정보·실제 DB 상태·센서 순번·이벤트·통계를 변경하지 않는다.
+- `ENABLE_SIMULATION=true`와 별도의 `SIMULATION_API_KEY`가 설정된 개발 서버에서만 쓰기 기능을 연다. 기본값은 비활성화다.
+  키는 PC CLI에서만 읽고 Flutter에는 전달하지 않는다. 기본 실행 주소는 loopback이며 원격 연결에는 HTTPS가 필요하다.
+- `POST /api/simulation/stalls`: Bearer 인증, `{"states":[{"stall_id":13,"occupied":false}]}`.
+  occupied는 strict boolean 또는 null(미확인), ID는 중복 없이 1~2147483647, 한 요청 및 전체 임시 지정은 최대 64칸이다.
+  등록된 활성 화장실의 칸만 허용하고 전체 요청을 한 번에 적용한다.
+- `POST /api/simulation/reset`: 같은 인증, `{"stall_ids":[13]}` 또는 `{"stall_ids":null}`(전체 해제).
+  해제하면 그동안 들어온 실제 센서의 최신 상태를 다시 표시한다. 서버 재시작으로도 임시 지정이 모두 해제된다.
+- 성공 응답은 `{"success":true,"changed":1}`이다. changed는 표시 상태 또는 테스트 표시가 바뀐 칸 수다.
+  비활성화는 404, 키 미설정은 503, 인증 실패는 401, 잘못된 입력은 422, 없는/비활성 칸은 404다.
+- Restroom에 필수 `simulated_stalls`(0 이상)를, Stall에 필수 `is_simulated` boolean을 추가한다.
+  목록·상세·추천은 동일한 임시 상태를 사용하며 앱에서 테스트 데이터라고 표시한다. 과거 통계를 생성하지 않는다.
+- `stall.updated`에 `simulated_stalls`와 `is_simulated`를 추가한다. occupied는 null도 허용해 미확인 지정·복귀를 전달한다.
+  각 이벤트의 집계는 해당 칸이 반영된 시점의 값이며 기존 클라이언트의 순차 갱신과 호환된다.
+  센서 입력 계약은 바뀌지 않는다. 가상 상태가 적용된 칸에도 실제 센서 수신·DB 저장은 계속한다.
+- 메모리는 단일 Backend 프로세스에서만 공유한다. 별도 DB migration이나 추가 런타임 의존성은 없다.
+
+## 디미고·GPS 전환 계약 (2026-10-24)
+
+- 모바일은 WGS84 `latitude`(-90~90), `longitude`(-180~180)를 사용한다. 두 값은 함께 보내며 거리는 서버가 구면 거리(m)로 계산한다.
+  기존 `x/y`는 이전 클라이언트 호환용으로만 남기며 GPS와 혼용하면 422다. 새 앱은 `x/y`를 보내거나 표시하지 않는다.
+- 목록·추천은 선택 `gender=male|female` 필터를 지원한다. GPS는 본관·신관·체육관 등 건물 간 거리 비교에 사용한다.
+  현재 층 입력이나 층 차이 가중치는 사용하지 않는다. 화장실의 층은 위치 안내용으로만 표시한다.
+- Restroom에 `latitude`, `longitude`, `gender`, `location_source`, `bidet_stalls`, `accessible_stalls`, `unknown_stalls`를 추가한다.
+  위도·경도가 미등록이면 null, `location_source=school_reference`는 학교 대표 좌표이며 칸의 실측 위치가 아니다.
+  `bidet_stalls`는 알려진 설치 수(미확인 null), `accessible_stalls`는 장애인 칸 수다.
+- Stall의 `occupied`, `has_bidet`는 미확인일 때 null이다. 실제 센서 수신 전에는 빈칸이나 사용 중으로 꾸미지 않는다.
+  `is_accessible`는 boolean이며 본관 1층 남녀 화장실의 1번 칸만 true다. 사용 가능한 칸은 `occupied == false`인 칸만 집계한다.
+- 실시간 이벤트에 `unknown_stalls`를 추가한다. 첫 관측은 null에서 true/false로의 상태 변경으로 기록·방송한다.
+- 관측된 빈칸이 없고 미확인 칸이 남아 있으면 추천은 `404 / Live availability unavailable`이다. 모두 사용 중으로 관측된 경우만 기존 만석 fallback을 적용한다.
+- 디미고 본관 데이터는 남/녀 각 B1·1·2·3층 8곳이며 사용자 제공 설치 수를 사용한다. 기존 개발용 3곳은 보관하고 앱 조회에서 제외한다.
+  1층 장애인 1번 칸에는 비데가 없다. 남자 비데는 B1 1번, 1층 2~4번, 2·3층 1~2번이다.
+  여자 1층 1번은 비데 없음이며 나머지 여자 칸의 비데 여부와 전체 비데 수는 미확인으로 유지한다.
+
 Flutter, Backend, IoT 담당자가 병렬 개발할 때 사용하는 공통 계약이다. 추천 정책은 [`AGENTS.md`](../AGENTS.md)를 따르며, 이 문서는 HTTP 및 WebSocket에서 주고받는 데이터와 경계 상황을 정의한다. 아래 예시는 설명용 데이터이며 실제 이용 통계가 아니다.
 
 ## 1. 공통 규칙
@@ -14,16 +50,20 @@ Flutter, Backend, IoT 담당자가 병렬 개발할 때 사용하는 공통 계�
 - 별도로 선택이라고 명시한 검증 오류 부가 필드를 제외하고, 응답 표에 정의한 필드는 모두 필수다. Nullable 필드도 키를 생략하지 않고 값이 없으면 JSON `null`을 반환한다. 배열은 `null` 대신 `[]`를 사용한다.
 - `integer`는 JSON 정수, `number`는 유한한 JSON 숫자, `boolean`은 JSON `true`/`false`다. `NaN`, 무한대는 허용하지 않는다. Flutter에서 `number`는 정수 표기로 올 수도 있으므로 `num`으로 읽어 `double`로 변환한다.
 - Path/Query 값은 URL 문자열로 전송하되 각 표의 타입으로 검증한다. 선택 Query는 값이 없으면 생략한다. 빈 문자열이나 문자열 `null`은 값 없음으로 취급하지 않는다.
-- MVP에는 페이지네이션, 사용자 로그인, 인증 헤더, WebSocket 구독 메시지를 요구하지 않는다.
+- 조회 API와 WebSocket은 사용자 로그인·인증 헤더 없이 사용한다. 센서 쓰기 API는 아래의 기기별 Bearer 인증이 필수다. 페이지네이션과 WebSocket 구독 메시지는 요구하지 않는다.
 - 응답의 알 수 없는 추가 필드는 무시할 수 있어야 한다. 기존 필드의 삭제·타입·의미 변경은 Flutter와 Backend가 합의한 뒤 이 문서를 먼저 갱신한다.
 
 ### 좌표와 거리
 
-- `x`, `y`는 서버에 등록된 화장실과 사용자가 공유하는 평면 좌표이며 단위는 미터(`m`)다. GPS 위도·경도가 아니다. 음수와 `0`도 유효하다.
-- `distance`는 요청한 사용자 좌표에서 화장실까지의 미터 단위 직선거리다. MVP에서는 Backend의 Location Service가 `sqrt((restroom.x - x)^2 + (restroom.y - y)^2)`로 계산한다.
-- 층간 이동, 계단, 엘리베이터, 실제 보행 경로는 이 거리 계산에 포함하지 않는다. `floor`는 표시 정보다.
-- 응답 숫자의 소수 자릿수는 고정하지 않는다. 표시용 반올림은 Flutter에서 수행한다.
-- 목록·상세의 선택 Query `x`, `y`는 둘 다 보내거나 둘 다 생략한다. 둘 다 생략하면 `distance: null`, 하나만 보내면 `422`다. 추천 API는 둘 다 필수다.
+- 새 앱은 WGS84 `latitude`(-90~90), `longitude`(-180~180)를 함께 전송한다. 각 값은 유한 수여야 한다.
+- `distance`는 GPS 구면 직선거리(m)다. 건물에 좌표가 없으면 목록·상세에서 null이며 추천 후보에서 제외한다.
+- 목록·상세는 좌표를 생략할 수 있고 이때 distance는 null이다. 추천은 좌표 쌍이 필수다.
+- 층간 이동·계단·엘리베이터·보행 경로는 계산하지 않는다. 현재 층 입력은 없으며 restroom의 floor는 안내용이다.
+- 구형 `x/y`는 동일한 미터 단위 평면의 호환 Query다. 각 값은 ±1,000,000 범위이며 두 값이 함께 있어야 한다.
+  GPS와 x/y 혼용, 한쪽 누락, 범위 초과·비유한 수·계산 불가능한 거리는 422다.
+- 소수 자릿수는 고정하지 않는다. 화면 반올림은 Flutter가 수행한다.
+
+아래 x/y 예시는 이전 계약을 설명하는 테스트 fixture다. 실제 시설·GPS 실행은 [디미고 인계](DIMIGO_GPS.md)를 따른다.
 
 ### Endpoint 요약
 
@@ -46,15 +86,19 @@ Backend는 정적 경로 `/api/restrooms/recommend`를 `/{restroom_id}`보다 �
 | --- | --- | --- | --- |
 | `id` | integer | 아니오 | 전체 서비스에서 유일한 칸 ID, `> 0` |
 | `stall_number` | integer | 아니오 | 화장실 내부 표시 번호, `> 0`, 해당 화장실 안에서 유일 |
-| `occupied` | boolean | 아니오 | `true`: 사용 중, `false`: 빈칸 |
-| `has_bidet` | boolean | 아니오 | 비데 설치 여부 |
+| `occupied` | boolean | 예 | `true`: 사용 중, `false`: 빈칸, null: 센서 미관측 |
+| `has_bidet` | boolean | 예 | 비데 설치 여부, null: 미확인 |
+| `is_accessible` | boolean | 아니오 | 장애인 칸 여부 |
+| `is_simulated` | boolean | 아니오 | PC에서 임시 지정한 상태인지 여부 |
 
 ```json
 {
   "id": 1,
   "stall_number": 1,
   "occupied": false,
-  "has_bidet": true
+  "has_bidet": true,
+  "is_accessible": false,
+  "is_simulated": false
 }
 ```
 
@@ -68,14 +112,22 @@ Backend는 정적 경로 `/api/restrooms/recommend`를 `/{restroom_id}`보다 �
 | `name` | string | 아니오 | 표시 이름, 빈 문자열 불가 |
 | `building` | string | 아니오 | 건물 이름, 빈 문자열 불가 |
 | `floor` | integer | 아니오 | 층. 예: `1`은 지상 1층, `-1`은 지하 1층 |
-| `x` | number | 아니오 | 화장실의 X 좌표, 미터 |
-| `y` | number | 아니오 | 화장실의 Y 좌표, 미터 |
+| `x` | number | 아니오 | 구형 평면 좌표, 호환용 |
+| `y` | number | 아니오 | 구형 평면 좌표, 호환용 |
+| `latitude` | number | 예 | WGS84 위도, -90~90 |
+| `longitude` | number | 예 | WGS84 경도, -180~180 |
+| `gender` | string | 아니오 | male, female, unisex |
+| `location_source` | string | 아니오 | school_reference: 학교 대표 위치, unverified: 미확인 |
+| `bidet_stalls` | integer | 예 | 확인된 비데 설치 수, null: 전체 수 미확인 |
+| `accessible_stalls` | integer | 아니오 | 전체 칸에 포함된 장애인 칸 수 |
+| `unknown_stalls` | integer | 아니오 | occupied가 null인 칸 수 |
+| `simulated_stalls` | integer | 아니오 | 테스트 상태가 적용된 칸 수, 전체 칸 수 이하 |
 | `distance` | number | 예 | 사용자와의 거리, `>= 0`. 목록·상세에서 사용자 좌표 생략 시 `null` |
 | `total_stalls` | integer | 아니오 | 화장실에 등록된 모든 칸 수, `>= 0` |
 | `available_stalls` | integer | 아니오 | `occupied == false`인 칸 수 |
 | `available_bidet_stalls` | integer | 아니오 | `occupied == false && has_bidet == true`인 칸 수 |
 
-항상 `0 <= available_bidet_stalls <= available_stalls <= total_stalls`를 만족한다. 집계값은 동일한 현재 칸 상태에서 계산하며 API마다 다른 기준을 적용하지 않는다. 등록된 칸이 없는 화장실은 세 집계값 모두 `0`이다.
+항상 `0 <= available_bidet_stalls <= available_stalls`와 `available_stalls + unknown_stalls <= total_stalls`를 만족한다. 집계값은 동일한 현재 칸 상태에서 계산하며 API마다 다른 기준을 적용하지 않는다. 등록된 칸이 없는 화장실은 세 집계값 모두 `0`이다.
 
 ```json
 {
@@ -88,7 +140,15 @@ Backend는 정적 경로 `/api/restrooms/recommend`를 `/{restroom_id}`보다 �
   "distance": null,
   "total_stalls": 3,
   "available_stalls": 2,
-  "available_bidet_stalls": 1
+  "available_bidet_stalls": 1,
+  "latitude": null,
+  "longitude": null,
+  "gender": "unisex",
+  "location_source": "unverified",
+  "bidet_stalls": null,
+  "accessible_stalls": 0,
+  "unknown_stalls": 0,
+  "simulated_stalls": 0
 }
 ```
 
@@ -100,7 +160,7 @@ Backend는 정적 경로 `/api/restrooms/recommend`를 `/{restroom_id}`보다 �
 | --- | --- | --- | --- |
 | `stalls` | Stall[] | 아니오 | 해당 화장실의 전체 칸, `stall_number` 오름차순. 칸이 없으면 `[]` |
 
-`total_stalls == stalls.length`이며 두 빈칸 집계값은 반환된 `stalls`와 일치해야 한다. 전체 JSON 예시는 상세 API에 있다.
+`total_stalls == stalls.length`이며 미확인·두 빈칸 집계값은 반환된 `stalls`와 일치해야 한다. 전체 JSON 예시는 상세 API에 있다.
 
 ### Recommendation
 
@@ -150,7 +210,8 @@ FastAPI의 기본 `HTTPException` 응답 형태를 사용한다.
 
 ### 입력 검증 오류
 
-Path, Query, JSON body의 누락·타입·범위 오류 및 잘못된 JSON은 `422 Unprocessable Entity`로 응답한다. FastAPI 기본 검증 오류 배열을 유지한다.
+Path, Query, JSON body의 누락·타입·범위 오류 및 잘못된 JSON은 `422 Unprocessable Entity`로 응답한다.
+검증 오류 배열의 `loc/msg/type`을 유지하되 직렬화 실패·입력 반사를 막기 위해 `input/ctx`는 응답에 넣지 않는다.
 
 | 필드 | Type | Nullable | 필수 여부 / 의미 |
 | --- | --- | --- | --- |
@@ -169,8 +230,7 @@ Query `x` 누락 예시:
     {
       "type": "missing",
       "loc": ["query", "x"],
-      "msg": "Field required",
-      "input": null
+      "msg": "Field required"
     }
   ]
 }
@@ -215,7 +275,10 @@ GET /api/health
 
 | Query | Type | 필수 | Nullable | 기본값 / 제약 |
 | --- | --- | --- | --- | --- |
-| `x` | number | 아니오 | 아니오 | 생략 가능. 사용자 X 좌표. `y`와 함께 제공 |
+| `latitude` | number | 아니오 | 아니오 | longitude와 함께, -90~90 |
+| `longitude` | number | 아니오 | 아니오 | latitude와 함께, -180~180 |
+| `gender` | string | 아니오 | 아니오 | male 또는 female, 생략 시 전체 |
+| `x` | number | 아니오 | 아니오 | 구형 호환 Query, y와 함께 제공 |
 | `y` | number | 아니오 | 아니오 | 생략 가능. 사용자 Y 좌표. `x`와 함께 제공 |
 
 성공: `200 OK`, `Restroom[]`. 좌표를 보내면 `distance`, `id` 순으로 오름차순 정렬하고, 생략하면 `id` 오름차순으로 정렬한다. 사용 중인 화장실도 목록에 포함한다. 각 항목은 `stalls`나 통계 필드를 포함하지 않는다.
@@ -236,7 +299,15 @@ GET /api/restrooms?x=10&y=20
     "distance": 0.0,
     "total_stalls": 3,
     "available_stalls": 2,
-    "available_bidet_stalls": 1
+    "available_bidet_stalls": 1,
+    "latitude": null,
+    "longitude": null,
+    "gender": "unisex",
+    "location_source": "unverified",
+    "bidet_stalls": null,
+    "accessible_stalls": 0,
+    "unknown_stalls": 0,
+    "simulated_stalls": 0
   },
   {
     "id": 2,
@@ -248,7 +319,15 @@ GET /api/restrooms?x=10&y=20
     "distance": 50.0,
     "total_stalls": 5,
     "available_stalls": 2,
-    "available_bidet_stalls": 1
+    "available_bidet_stalls": 1,
+    "latitude": null,
+    "longitude": null,
+    "gender": "unisex",
+    "location_source": "unverified",
+    "bidet_stalls": null,
+    "accessible_stalls": 0,
+    "unknown_stalls": 0,
+    "simulated_stalls": 0
   }
 ]
 ```
@@ -274,7 +353,9 @@ GET /api/restrooms?x=10&y=20
 
 | Query | Type | 필수 | Nullable | 기본값 / 제약 |
 | --- | --- | --- | --- | --- |
-| `x` | number | 아니오 | 아니오 | 생략 가능. 사용자 X 좌표. `y`와 함께 제공 |
+| `latitude` | number | 아니오 | 아니오 | longitude와 함께, -90~90 |
+| `longitude` | number | 아니오 | 아니오 | latitude와 함께, -180~180 |
+| `x` | number | 아니오 | 아니오 | 구형 호환 Query, y와 함께 제공 |
 | `y` | number | 아니오 | 아니오 | 생략 가능. 사용자 Y 좌표. `x`와 함께 제공 |
 
 Request body: 없음. 성공: `200 OK`, `RestroomDetail` 객체.
@@ -296,10 +377,39 @@ GET /api/restrooms/1
   "available_stalls": 2,
   "available_bidet_stalls": 1,
   "stalls": [
-    {"id": 1, "stall_number": 1, "occupied": false, "has_bidet": true},
-    {"id": 2, "stall_number": 2, "occupied": true, "has_bidet": false},
-    {"id": 3, "stall_number": 3, "occupied": false, "has_bidet": false}
-  ]
+    {
+      "id": 1,
+      "stall_number": 1,
+      "occupied": false,
+      "has_bidet": true,
+      "is_accessible": false,
+      "is_simulated": false
+    },
+    {
+      "id": 2,
+      "stall_number": 2,
+      "occupied": true,
+      "has_bidet": false,
+      "is_accessible": false,
+      "is_simulated": false
+    },
+    {
+      "id": 3,
+      "stall_number": 3,
+      "occupied": false,
+      "has_bidet": false,
+      "is_accessible": false,
+      "is_simulated": false
+    }
+  ],
+  "latitude": null,
+  "longitude": null,
+  "gender": "unisex",
+  "location_source": "unverified",
+  "bidet_stalls": null,
+  "accessible_stalls": 0,
+  "unknown_stalls": 0,
+  "simulated_stalls": 0
 }
 ```
 
@@ -318,8 +428,10 @@ GET /api/restrooms/1
 
 | Query | Type | 필수 | Nullable | 기본값 / 제약 |
 | --- | --- | --- | --- | --- |
-| `x` | number | 예 | 아니오 | 사용자 X 좌표, 기본값 없음 |
-| `y` | number | 예 | 아니오 | 사용자 Y 좌표, 기본값 없음 |
+| `latitude` | number | 예* | 아니오 | longitude와 함께, -90~90 |
+| `longitude` | number | 예* | 아니오 | latitude와 함께, -180~180 |
+| `gender` | string | 아니오 | 아니오 | male 또는 female, 생략 시 전체 |
+| `x`, `y` | number | 아니오 | 아니오 | *구형 호환: GPS 대신 둘 다 전달 가능. GPS와 혼용 불가 |
 | `bidet_required` | boolean | 아니오 | 아니오 | 기본값 `false`. 클라이언트는 `true` 또는 `false` 문자열로 전송 |
 
 성공: `200 OK`, `Recommendation` 객체. 배열이나 nullable 최상위 응답을 사용하지 않는다. `id`는 추천된 화장실 ID다.
@@ -344,7 +456,15 @@ GET /api/restrooms/recommend?x=10&y=20&bidet_required=false
   "available_bidet_stalls": 1,
   "statistics_used": true,
   "historical_availability_rate": 0.82,
-  "historical_bidet_availability_rate": 0.65
+  "historical_bidet_availability_rate": 0.65,
+  "latitude": null,
+  "longitude": null,
+  "gender": "unisex",
+  "location_source": "unverified",
+  "bidet_stalls": null,
+  "accessible_stalls": 0,
+  "unknown_stalls": 0,
+  "simulated_stalls": 0
 }
 ```
 
@@ -366,7 +486,15 @@ GET /api/restrooms/recommend?x=10&y=20&bidet_required=false
   "available_bidet_stalls": 1,
   "statistics_used": false,
   "historical_availability_rate": null,
-  "historical_bidet_availability_rate": null
+  "historical_bidet_availability_rate": null,
+  "latitude": null,
+  "longitude": null,
+  "gender": "unisex",
+  "location_source": "unverified",
+  "bidet_stalls": null,
+  "accessible_stalls": 0,
+  "unknown_stalls": 0,
+  "simulated_stalls": 0
 }
 ```
 
@@ -377,7 +505,9 @@ GET /api/restrooms/recommend?x=10&y=20&bidet_required=false
 | 조건 | 결과 |
 | --- | --- |
 | 등록된 화장실이 없음 | `404`, `{"detail":"No restrooms found"}` |
-| 등록된 화장실은 있지만 모든 화장실의 `available_stalls == 0` | `bidet_required`와 관계없이 전체에서 가장 가까운 화장실을 `200`으로 반환. 통계는 사용하지 않으며 `statistics_used: false` |
+| 빈칸이 없고 미관측 칸이 남아 있음 | `404`, `{"detail":"Live availability unavailable"}` |
+| GPS 추천 후보 모두의 건물 좌표가 없음 | `404`, `{"detail":"Restroom location unavailable"}` |
+| 등록된 화장실의 `available_stalls == 0`이고 `unknown_stalls == 0` | `bidet_required`와 관계없이 전체에서 가장 가까운 화장실을 `200`으로 반환. 통계는 사용하지 않으며 `statistics_used: false` |
 | 일반 요청이고 빈칸이 있음 | `available_stalls > 0`인 후보에서 선택 |
 | 비데 필수이고 빈 비데 칸이 있음 | `available_bidet_stalls > 0`인 후보에서 선택 |
 | 비데 필수이고 일반 빈칸은 있지만 빈 비데 칸은 어디에도 없음 | `404`, `{"detail":"No available bidet stalls"}`. 비데 필수 조건을 임의로 해제하지 않음 |
@@ -400,7 +530,15 @@ GET /api/restrooms/recommend?x=10&y=20&bidet_required=false
   "available_bidet_stalls": 0,
   "statistics_used": false,
   "historical_availability_rate": null,
-  "historical_bidet_availability_rate": null
+  "historical_bidet_availability_rate": null,
+  "latitude": null,
+  "longitude": null,
+  "gender": "unisex",
+  "location_source": "unverified",
+  "bidet_stalls": null,
+  "accessible_stalls": 0,
+  "unknown_stalls": 0,
+  "simulated_stalls": 0
 }
 ```
 
@@ -417,24 +555,41 @@ GET /api/restrooms/recommend?x=10&y=20&bidet_required=false
 
 목적: 등록된 센서가 보고한 현재 사용 상태를 연결된 칸에 반영한다. 새로운 센서나 칸을 생성하는 API가 아니다.
 
+- 필수 인증: `Authorization: Bearer <해당 device_id의 비밀 키>`.
+- 재전송 방지: 필수 정수 `sequence`(1~9223372036854775807)를 기기별로 단조 증가시킨다.
+  서버는 마지막 번호와 상태를 DB 트랜잭션에 저장한다. 작은 번호 또는 같은 번호에 다른 상태는 `409 / Stale sensor sequence`다.
+  같은 번호·같은 상태는 응답 유실 재시도로 취급하여 `changed=false`를 반환하며 상태·이벤트·방송을 변경하지 않는다.
+  기기는 재부팅 후에도 번호를 유지하고, 응답 유실 재시도에는 동일한 번호와 상태를 사용한다. 키 교체만으로 번호가 초기화되지 않는다.
+- 서버 요청 속도 제한·최소 상태 유지시간을 넘으면 `429 / Sensor rate limit exceeded`와 `Retry-After`(초)를 반환한다.
+  거절된 요청은 번호도 소비하지 않는다. 단일 프로세스의 기기별/전체 요청 제한과 DB의 칸별 상태 변경 간격을 함께 적용한다.
+- 서버의 `SENSOR_API_KEYS` JSON 객체에 기기별로 서로 다른 키를 설정한다. `device_id` 자체는 자격 증명이 아니다.
+  키는 `secrets.token_urlsafe(32)` 등으로 생성한 32바이트 이상의 난수이며, URL-safe 문자 43~128자로 설정한다.
+  다른 기기의 키로는 요청할 수 없다. 키가 누락되거나 틀린 경우, 키가 설정되지 않은 기기인 경우 모두 같은 `401`로 응답한다.
+- 설정이 없거나 빈 객체이면 센서 쓰기를 `503`으로 차단한다. 인증 없이 쓰기를 허용하는 fallback은 없다.
+- 인증은 DB 조회·수정 전에 검사하며 실패 시 DB·이벤트·WebSocket에 영향을 주지 않는다.
+  키는 서버와 해당 IoT 기기에만 보관하고 Flutter 앱·저장소에는 넣지 않는다. 키를 교체하거나 삭제한 뒤 Backend를 재생성하면 이전 키는 무효다.
+- Bearer 키를 보내는 외부 연결은 HTTPS를 사용한다. 로컬 HTTP는 개발용이며 도청·캡처된 요청의 재생을 막지 못한다.
 - Path parameter: 없음.
 - Query parameter: 없음.
 - Request body: 필수 JSON 객체.
 
 | Body 필드 | Type | 필수 | Nullable | 제약 |
 | --- | --- | --- | --- | --- |
-| `device_id` | string | 예 | 아니오 | 사전 등록된 센서 식별자. 빈 문자열·공백만 있는 문자열 불가. 대소문자를 구분하며 등록값과 정확히 일치해야 함 |
+| `device_id` | string | 예 | 아니오 | ASCII 영숫자로 시작하며 영숫자·`.`·`_`·`:`·`-`만 허용, 최대 128자. 대소문자를 구분하며 등록값과 정확히 일치해야 함 |
 | `occupied` | boolean | 예 | 아니오 | 안정화 및 센서 방향 변환을 마친 논리 상태. JSON boolean만 허용하며 `0`, `1`, `"true"` 등으로 대체하지 않음 |
+| `sequence` | integer | 예 | 아니오 | 기기별 단조 증가 번호. boolean·문자열·소수 불가 |
 
 ```http
 POST /api/sensors/stall
 Content-Type: application/json
+Authorization: Bearer <device-specific-secret>
 ```
 
 ```json
 {
   "device_id": "stall-a-01",
-  "occupied": true
+  "occupied": true,
+  "sequence": 1
 }
 ```
 
@@ -465,24 +620,36 @@ Content-Type: application/json
 
 처리 및 재전송 계약:
 
-1. `device_id`로 센서를 찾고 활성 여부, 화장실·칸 연결 관계를 검증한다.
+1. 해당 `device_id`의 Bearer 키를 인증한 뒤 센서를 찾고 활성 여부, 화장실·칸 연결 관계를 검증한다.
 2. 상태가 다르면 칸의 `occupied`와 `updated_at`을 갱신하고 해당 상태 변경의 `SensorEvent`를 같은 DB 트랜잭션에 저장한다. 동시 요청도 같은 칸의 변경 판단과 저장이 순차적으로 처리되어야 한다.
 3. 커밋된 변경에 대해서만 `stall.updated`를 방송한다. 저장 실패 시 칸과 이벤트 모두 반영하지 않고 성공 응답이나 이벤트를 보내지 않는다.
 4. 상태가 같으면 `changed: false`다. `updated_at`을 변경하거나 중복 `SensorEvent`를 추가하거나 WebSocket 이벤트를 보내지 않는다.
 5. 성공은 DB 반영 여부를 뜻하며 모든 WebSocket 수신자의 수신 완료를 보장하지 않는다. 커밋 후 방송 실패 때문에 이미 저장한 변경을 롤백하지 않는다. 이벤트와 HTTP 응답 중 클라이언트에 먼저 도착하는 것은 보장하지 않는다.
-6. 요청에는 발생 시각이나 순번이 없다. 상태는 서버에서 처리된 순서로 반영한다. IoT는 같은 기기의 요청을 겹쳐 보내지 않고, 재전송 시 이미 더 최신 상태가 있으면 오래된 상태 대신 현재 안정화된 상태를 보낸다. 동일 상태의 연속 재전송은 변경을 중복 생성하지 않지만 오래된 요청의 임의 재생까지 방지하는 계약은 아니다.
+6. 기기별 `sequence`와 마지막 요청 상태를 같은 트랜잭션에서 기록한다. 낮은 번호·같은 번호의 다른 상태는 거부한다. 새로운 번호의 동일 상태는 번호만 전진시키며 칸·이벤트·방송을 변경하지 않는다.
 
 | 주요 오류 | 조건 | Body |
 | --- | --- | --- |
-| `404` | 등록되지 않은 `device_id` | `{"detail":"Sensor not found"}` |
+| `401` | 키 누락·오류·다른 기기의 키·해당 기기의 키 미설정 | `{"detail":"Invalid sensor credentials"}`, `WWW-Authenticate: Bearer` |
+| `404` | 키 인증은 성공했지만 DB에 등록되지 않은 `device_id` | `{"detail":"Sensor not found"}` |
 | `409` | 센서가 `active == false` | `{"detail":"Sensor is inactive"}` |
+| `409` | 오래된 번호 또는 동일 번호에 다른 상태 | `{"detail":"Stale sensor sequence"}` |
 | `409` | 연결된 칸·화장실이 없거나 소속 관계가 불일치 | `{"detail":"Sensor mapping is invalid"}` |
 | `422` | 필드 누락, null, 잘못된 타입, 비어 있는 식별자 또는 JSON 구문 오류 | 공통 검증 오류 배열 |
+| `429` | 요청 속도·최소 상태 유지시간 제한 | `{"detail":"Sensor rate limit exceeded"}`, `Retry-After` 헤더 |
+| `503` | 서버에 센서 인증 키가 하나도 설정되지 않음 | `{"detail":"Sensor authentication unavailable"}` |
 | `503` | DB 접근 불가 | `{"detail":"Database unavailable"}` |
 
-위 표의 `404`·`409`·`422`·`503` 오류에서는 칸 상태 변경과 `SensorEvent` 추가가 없어야 한다. 응답을 받지 못한 네트워크 단절이나 타임아웃은 DB 미반영을 뜻하지 않는다. 이때는 현재 안정화된 상태를 재전송하고 성공 응답을 확인한다.
+위 표의 `401`·`404`·`409`·`422`·`429`·`503` 오류에서는 칸 상태 변경과 `SensorEvent` 추가가 없어야 한다.
+응답을 받지 못한 네트워크 단절이나 타임아웃은 DB 미반영을 뜻하지 않는다. 응답 유실 재시도는 동일 번호·동일 상태로 보내고 성공 응답을 확인한다.
 
 ## 9. WS /ws
+
+브라우저 `Origin`은 `CORS_ALLOWED_ORIGINS`의 정확한 origin 또는 별도로 설정한 `WS_ALLOWED_ORIGINS`만 허용한다.
+`null`·다중 Origin·미등록 origin은 accept 전에 거부한다. Origin 없는 native Flutter/IoT 클라이언트는 허용한다.
+이는 공개 조회 스트림의 브라우저 접근 정책이며 사용자 인증을 대체하지 않는다.
+전체·IP별 연결 수 제한을 accept 전에 적용하며, 종료·실패 시 슬롯을 반환한다.
+기본 한도는 전체 100개, IP당 10개다. 거부된 handshake는 HTTP 403, ASGI 테스트에서는 close 1008로 관측된다.
+클라이언트 IP는 직접 연결 주소를 기준으로 하며 기본 실행은 proxy header를 신뢰하지 않는다.
 
 목적: 연결된 Flutter 클라이언트에 전체 화장실의 칸 상태 변경을 전달한다.
 
@@ -496,17 +663,20 @@ Content-Type: application/json
 
 ### stall.updated
 
-다음 필드는 모두 필수이며 non-null이다. 최소 식별·상태 필드에 **변경 후 집계값**을 더해 목록을 추가 요청 없이 갱신할 수 있게 한다.
+다음 필드는 모두 응답에 포함한다. occupied는 미확인 지정·복귀 시 null이며 나머지는 non-null이다. 최소 식별·상태 필드에 **변경 후 집계값**을 더해 목록을 추가 요청 없이 갱신할 수 있게 한다.
 
 | 필드 | Type | Nullable | 의미 / 제약 |
 | --- | --- | --- | --- |
 | `type` | string | 아니오 | 고정값 `"stall.updated"` |
 | `restroom_id` | integer | 아니오 | 변경된 칸이 속한 화장실 ID, `> 0` |
 | `stall_id` | integer | 아니오 | 변경된 `Stall.id`, `> 0` |
-| `occupied` | boolean | 아니오 | 변경 후 사용 상태 |
+| `occupied` | boolean | 예 | 변경 후 사용 상태. 미확인 지정·복귀 시 null |
+| `is_simulated` | boolean | 아니오 | 변경 후 해당 칸의 테스트 상태 여부 |
 | `total_stalls` | integer | 아니오 | 변경 반영 후 해당 화장실의 전체 칸 수 |
 | `available_stalls` | integer | 아니오 | 변경 반영 후 해당 화장실의 빈칸 수 |
 | `available_bidet_stalls` | integer | 아니오 | 변경 반영 후 해당 화장실의 빈 비데 칸 수 |
+| `unknown_stalls` | integer | 아니오 | 변경 반영 후 미관측 칸 수 |
+| `simulated_stalls` | integer | 아니오 | 변경 반영 후 테스트 상태가 적용된 칸 수 |
 
 집계값은 `Restroom`과 같은 제약을 따르며, 해당 변경을 반영한 동일한 DB 상태를 나타낸다. 예를 들어 상세 API 예시의 3번 칸이 사용 중으로 바뀌면:
 
@@ -518,13 +688,16 @@ Content-Type: application/json
   "occupied": true,
   "total_stalls": 3,
   "available_stalls": 1,
-  "available_bidet_stalls": 1
+  "available_bidet_stalls": 1,
+  "unknown_stalls": 0,
+  "simulated_stalls": 0,
+  "is_simulated": false
 }
 ```
 
 ### Flutter 동기화 및 추천 갱신
 
-- 목록은 `restroom_id`로 찾아 세 집계값을 **대입**한다. `occupied`를 보고 무조건 `+1`/`-1`하지 않는다. 같은 이벤트를 반복 적용해도 집계가 틀어지면 안 된다.
+- 목록은 `restroom_id`로 찾아 미관측·전체·두 빈칸 집계값을 **대입**한다. `occupied`를 보고 무조건 `+1`/`-1`하지 않는다. 같은 이벤트를 반복 적용해도 집계가 틀어지면 안 된다.
 - 상세가 캐시되어 있으면 `stall_id`로 해당 칸의 `occupied`도 대입한다. `has_bidet`는 기존 값을 유지한다.
 - 알 수 없는 화장실·칸을 받으면 해당 화장실의 상세 API로 재조회한다. 모든 이벤트마다 전체 목록을 재조회하지 않는다.
 - 추천은 Backend에서 다시 계산한다. Flutter는 상태 변경 후 현재 좌표와 비데 설정으로 추천 API를 재요청한다. 다른 화장실이 비는 경우에도 더 적절한 추천이 생길 수 있으므로 현재 추천 화장실의 이벤트만 감시하지 않는다.

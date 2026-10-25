@@ -1,130 +1,106 @@
 import 'package:flutter/material.dart';
 
 import '../state/app_controller.dart';
-import '../widgets/bidet_toggle.dart';
-import '../widgets/connection_status.dart';
 import '../widgets/message_card.dart';
-import '../widgets/recommended_restroom_card.dart';
-import '../widgets/restroom_card.dart';
+import '../widgets/restroom_list_card.dart';
+import '../widgets/restroom_list_filters.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.controller,
     required this.onOpenDetail,
-    required this.onChangeLocation,
   });
   final AppController controller;
   final ValueChanged<int> onOpenDetail;
-  final VoidCallback onChangeLocation;
+
+  static const backgroundColor = Color(0xFFF2F7FF);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  bool _bidetOnly = false;
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return RefreshIndicator(
-      onRefresh: controller.refresh,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-        physics: const AlwaysScrollableScrollPhysics(),
+    final controller = widget.controller;
+    final restrooms = controller.restrooms.where((room) {
+      if (_bidetOnly && room.availableBidetStalls == 0) return false;
+      if (controller.accessibleOnly) {
+        return room.availableStalls > 0 &&
+            room.accessibleStalls > 0 &&
+            controller.hasAvailableAccessibleStall(
+              room.id,
+              bidetRequired: _bidetOnly,
+            );
+      }
+      return true;
+    }).toList();
+    return ColoredBox(
+      color: HomeScreen.backgroundColor,
+      child: Column(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('현재 기준 위치', style: text.bodySmall),
-                    const SizedBox(height: 4),
-                    Text(controller.location.label, style: text.titleLarge),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: onChangeLocation,
-                tooltip: '기준 위치 변경',
-                icon: const Icon(Icons.my_location_rounded),
-              ),
-            ],
+          RestroomListFilters(
+            gender: controller.gender,
+            accessibleOnly: controller.accessibleOnly,
+            bidetOnly: _bidetOnly,
+            onGenderChanged: controller.setGender,
+            onAccessibleChanged: controller.setAccessibleOnly,
+            onBidetChanged: (value) => setState(() => _bidetOnly = value),
           ),
-          const SizedBox(height: 24),
-          Text('지금, 어디로 갈까요?', style: text.headlineLarge),
-          const SizedBox(height: 8),
-          const Text('빈칸부터 확인하고 편하게 이동하세요.'),
-          const SizedBox(height: 20),
-          ConnectionStatus(controller: controller),
-          const SizedBox(height: 20),
-          if (controller.recommendationLoading &&
-              controller.recommendation == null)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(36),
-                child: Column(
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text('추천 화장실을 확인하고 있어요'),
-                  ],
-                ),
-              ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final inset = constraints.maxWidth < 360 ? 20.0 : 28.0;
+                return RefreshIndicator(
+                  onRefresh: controller.refresh,
+                  child: ListView(
+                    key: const PageStorageKey('restroom-list'),
+                    padding: EdgeInsets.fromLTRB(inset, 12, inset, 32),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      if (controller.loading ||
+                          controller.accessibleFilterLoading) ...[
+                        LinearProgressIndicator(
+                          semanticsLabel: controller.accessibleOnly
+                              ? '장애인 칸 빈자리 확인 중'
+                              : '화장실 목록 불러오는 중',
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      if (controller.listError != null) ...[
+                        MessageCard(
+                          message: controller.listError!,
+                          icon: Icons.cloud_off_outlined,
+                          onRetry: controller.refresh,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      if (!controller.loading &&
+                          !controller.accessibleFilterLoading &&
+                          controller.listError == null &&
+                          restrooms.isEmpty)
+                        MessageCard(
+                          message: controller.restrooms.isEmpty
+                              ? '아직 등록된 화장실이 없어요.'
+                              : '선택한 조건에 맞는 빈칸이 확인된 화장실이 없어요.\n필터를 해제해 다른 화장실을 확인하세요.',
+                        ),
+                      for (final restroom in restrooms) ...[
+                        RestroomListCard(
+                          key: ValueKey('restroom-${restroom.id}'),
+                          restroom: restroom,
+                          onTap: () => widget.onOpenDetail(restroom.id),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                    ],
+                  ),
+                );
+              },
             ),
-          if (controller.recommendationLoading &&
-              controller.recommendation != null)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: LinearProgressIndicator(semanticsLabel: '추천 업데이트 중'),
-            ),
-          if (controller.recommendation != null)
-            RecommendedRestroomCard(
-              recommendation: controller.recommendation!,
-              onTap: () => onOpenDetail(controller.recommendation!.restroom.id),
-            ),
-          if (!controller.recommendationLoading &&
-              controller.recommendationError != null)
-            MessageCard(
-              message: controller.recommendationError!,
-              icon: Icons.cloud_off_outlined,
-              onRetry: controller.refreshRecommendation,
-            ),
-          if (!controller.recommendationLoading &&
-              controller.recommendationEmpty != null)
-            MessageCard(message: controller.recommendationEmpty!),
-          const SizedBox(height: 16),
-          BidetToggle(
-            value: controller.bidetRequired,
-            onChanged: controller.setBidetRequired,
           ),
-          const SizedBox(height: 28),
-          Row(
-            children: [
-              Expanded(child: Text('주변 화장실', style: text.titleLarge)),
-              Text('${controller.restrooms.length}곳', style: text.bodyMedium),
-            ],
-          ),
-          const SizedBox(height: 14),
-          if (controller.loading) ...[
-            const LinearProgressIndicator(semanticsLabel: '화장실 목록 불러오는 중'),
-            const SizedBox(height: 16),
-          ],
-          if (controller.listError != null) ...[
-            MessageCard(
-              message: controller.listError!,
-              icon: Icons.cloud_off_outlined,
-              onRetry: controller.refresh,
-            ),
-            const SizedBox(height: 12),
-          ],
-          if (!controller.loading &&
-              controller.listError == null &&
-              controller.restrooms.isEmpty)
-            const MessageCard(message: '아직 등록된 화장실이 없어요.'),
-          for (final restroom in controller.restrooms) ...[
-            RestroomCard(
-              key: ValueKey('restroom-${restroom.id}'),
-              restroom: restroom,
-              onTap: () => onOpenDetail(restroom.id),
-            ),
-            const SizedBox(height: 12),
-          ],
         ],
       ),
     );

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:catchy_toilet/repositories/api_restroom_repository.dart';
 import 'package:catchy_toilet/services/api_service.dart';
+import 'package:catchy_toilet/services/location_service.dart';
 import 'package:catchy_toilet/services/websocket_service.dart';
 import 'package:catchy_toilet/state/app_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -153,6 +154,15 @@ void main() {
           connectionTimeout: const Duration(milliseconds: 300),
         ),
       ),
+      locationService: LocationService()
+        ..setLocation(
+          const UserLocation(
+            label: '테스트 GPS',
+            latitude: 37.35,
+            longitude: 126.84,
+            isGps: true,
+          ),
+        ),
       eventDelay: const Duration(milliseconds: 30),
     );
   });
@@ -212,7 +222,7 @@ void main() {
       () =>
           server.connections >= 2 &&
           server.listCalls > initialLists &&
-          controller.details[1]!.stalls!.single.occupied &&
+          controller.details[1]!.stalls!.single.occupied == true &&
           controller.isRealtime,
     );
     expect(controller.recommendation!.restroom.id, 2);
