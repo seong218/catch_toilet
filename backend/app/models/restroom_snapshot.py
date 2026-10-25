@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db import Base
@@ -17,7 +17,7 @@ class RestroomSnapshot(Base):
 
     captured_at and is_test_data are deliberately required without defaults:
     insertion time is not observation time, and provenance must be explicit.
-    Collection scheduling and statistics are separate, later services.
+    Collection scheduling and statistics are separate services.
     """
 
     __tablename__ = "restroom_snapshots"
@@ -46,6 +46,7 @@ class RestroomSnapshot(Base):
     available_bidet_stalls: Mapped[int]
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     is_test_data: Mapped[bool]
+    bidet_sample_valid: Mapped[bool] = mapped_column(server_default=true())
 
     restroom: Mapped[Restroom] = relationship(back_populates="snapshots")
 

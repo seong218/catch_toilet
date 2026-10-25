@@ -7,7 +7,7 @@
 - DB 데이터는 `catchy-toilet_postgres_data` named volume에 보관한다.
 - PostgreSQL 호스트 포트는 `127.0.0.1`에만 공개한다. Backend 컨테이너는 내부 네트워크의 `db:5432`로 연결한다.
 - DB 초기 사용자·DB·비밀번호는 빈 volume을 처음 생성할 때만 적용된다. 기존 DB의 비밀번호는 `.env` 수정만으로 변경되지 않는다.
-- 스키마 관리는 `backend/alembic/`에서 수행한다. initial revision은 `0001`, `0003`은 센서 순번·보관 인덱스, `0004`는 디미고·GPS, `0005`는 장애인 여부 기본값을 추가한다. 시설 seed는 별도 명령이다.
+- 스키마 관리는 `backend/alembic/`에서 수행한다. initial revision은 `0001`, `0003`은 센서 순번·보관 인덱스, `0004`는 디미고·GPS, `0005`는 장애인 여부 기본값, `0006`은 센서 수신 시각·비데 관측 유효 여부, `0007`은 명시적 추적 시작·중지 상태를 추가한다. 시설 seed는 별도 명령이다.
 - 서비스 정의는 이 디렉터리에 유지하고 루트 Compose는 실행 진입점으로 사용한다.
 - DB가 healthy가 된 뒤 별도 migrate 작업이 migration·런타임 계정 권한을 설정한 뒤 API가 시작한다.
 
@@ -29,12 +29,13 @@ SQLAlchemy 모델은 `backend/app/models/`에 모델별로 분리했다. GPS·�
 | --- | --- |
 | `Restroom` / `restrooms` | `id`, `name`, `building`, `floor`, `x`, `y`, `created_at` |
 | `Stall` / `stalls` | `id`, `restroom_id`, `stall_number`, `occupied`, `has_bidet`, `updated_at` |
-| `Sensor` / `sensors` | `id`, `device_id`, `restroom_id`, `stall_id`, `sensor_type`, `active`, `last_sequence`, `last_occupied` |
+| `Sensor` / `sensors` | `id`, `device_id`, `restroom_id`, `stall_id`, `sensor_type`, `active`, `last_sequence`, `last_occupied`, `last_seen_at` |
 | `SensorEvent` / `sensor_events` | `id`, `sensor_id`, `event_type`, `value`, `created_at` |
-| `RestroomSnapshot` / `restroom_snapshots` | `id`, `restroom_id`, `total_stalls`, `available_stalls`, `available_bidet_stalls`, `captured_at`, `is_test_data` |
+| `RestroomSnapshot` / `restroom_snapshots` | `id`, `restroom_id`, `total_stalls`, `available_stalls`, `available_bidet_stalls`, `captured_at`, `is_test_data`, `bidet_sample_valid` |
+| `StatisticsTracking` / `statistics_tracking` | `id=1`, `enabled`(기본 false), `started_at`, `stopped_at` |
 
 - 관계는 `Restroom 1:N Stall`, `Restroom 1:N Sensor`, `Stall 1:N Sensor`, `Sensor 1:N SensorEvent`, `Restroom 1:N RestroomSnapshot`이다.
-- 각 ID는 자동 생성되는 양의 정수다. `stall_number`는 양의 정수이며 같은 화장실 안에서 유일하다.
+- 도메인 ID는 자동 생성되는 양의 정수다. 추적 설정만 `id=1`인 단일 행을 사용한다. `stall_number`는 양의 정수이며 같은 화장실 안에서 유일하다.
 - `device_id`는 전체에서 유일하고 대소문자를 구분한다. 빈 값·공백만 있는 값은 허용하지 않는다.
 - 센서의 `(stall_id, restroom_id)`는 칸의 `(id, restroom_id)`를 함께 참조한다. 다른 화장실의 칸을 연결하면 DB가 거부한다. ORM으로 센서를 등록할 때도 `restroom`과 `stall`을 모두 지정한다.
 - 모든 부모 참조에 `ON DELETE RESTRICT`를 사용해 연결 데이터와 이벤트 이력의 연쇄 삭제를 막는다. 사용하지 않는 센서는 `active=false`로 관리한다.
@@ -62,7 +63,7 @@ SQLAlchemy 모델은 `backend/app/models/`에 모델별로 분리했다. GPS·�
 당시 비데·매핑 이력과 관측 범위가 모두 있다면 시간 구간을 재구성할 수 있지만, 현 구조는 이를 보장하지 않는다.
 
 이를 위해 **화장실 한 곳을 한 시점에 관측한 원본 집계**를 저장하는 `RestroomSnapshot`을 추가했다.
-모델·제약조건·migration과 통계 service를 제공한다. 추천에는 가까운 후보 간 보조 기준으로 연결했고 수집 스케줄러는 아직 없다.
+서버의 1분 간격 수집기와 통계 service를 제공한다. 추천에는 가까운 후보 간 보조 기준으로 연결되어 있다.
 
 | 필드 | 의미 / 제약 |
 | --- | --- |
@@ -71,8 +72,9 @@ SQLAlchemy 모델은 `backend/app/models/`에 모델별로 분리했다. GPS·�
 | `total_stalls` | 관측 당시 전체 칸 수, 0 이상. 이후 칸 증감과 구분하고 당시 빈칸 집계를 검증하는 용도 |
 | `available_stalls` | 관측 당시 빈칸 수, `0 <= available_stalls <= total_stalls` |
 | `available_bidet_stalls` | 관측 당시 빈 비데 칸 수, `0 <= available_bidet_stalls <= available_stalls` |
-| `captured_at` | 실제 관측 시각, 유한한 `TIMESTAMP WITH TIME ZONE`, 자동 기본값 없음 |
+| `captured_at` | 관측 시간 구간, 유한한 `TIMESTAMP WITH TIME ZONE`, 자동 기본값 없음. 수집기는 DB 시각을 해당 분 시작으로 정규화 |
 | `is_test_data` | 개발·데모·합성 관측이면 `true`, 자동 기본값 없이 작성자가 반드시 지정 |
+| `bidet_sample_valid` | 모든 칸의 비데 설치 여부가 확인된 표본인지 표시. `false`인 표본은 비데 비율에서 제외 |
 
 모든 필드는 non-null이다. 삽입 시각을 과거 관측 시각으로 오인하지 않도록 `captured_at`을 명시한다.
 ORM은 timezone 없는 datetime을 거부한다. 직접 SQL을 사용할 때도 UTC 또는 명시적 offset을 전달한다.
@@ -80,32 +82,42 @@ ORM은 timezone 없는 datetime을 거부한다. 직접 SQL을 사용할 때도 
 화장실별 기간 조회에도 쓰인다. 서로 다른 timezone 표기의 같은 순간도 중복이다.
 요일·시간대·비율은 별도 컬럼에 중복 저장하지 않는다.
 
-통계 집계와 후속 수집에서 적용할 기준:
+통계 수집과 집계 기준:
 
 - 상태 변경 횟수와 독립적인 **일정 간격의 유효한 관측**을 사용한다. 변하지 않은 상태도 표본이다.
   센서 이벤트마다만 스냅샷을 만들거나, 임의 시각의 수동 기록을 같은 가중치의 정기 표본으로 섞지 않는다.
-- 미래 수집기는 공통 집계 repository로 같은 DB snapshot의 세 집계값을 얻고 실제 관측 시각과 함께 저장한다.
-  반복 작업의 같은 관측은 같은 시각을 재사용한다. 현재의 unique 제약은 정확히 같은 순간의 중복만 막으므로
-  일정 간격의 수집과 한 구간 내 중복 방지는 수집기에서도 보장해야 한다.
+- `backend/app/services/statistics_collection.py`는 한 INSERT/SELECT로 원본 DB 상태를 집계·저장한다.
+  명시적인 추적 시작 이후 매 분 경계에 수집하며, 분 시작으로 정규화한 시각과 unique 제약으로 같은 분의 중복을 막는다.
+  여러 수집기가 동시에 실행되어도 화장실당 한 표본만 저장한다. DB 오류는 롤백 후 다음 분에 재시도한다.
+- 활성 화장실의 모든 칸에 확인된 상태와 최근 활성 센서 보고가 있어야 한다. 하나라도 미확인·오래된 상태이면 건너뛴다.
+  칸 상태와 일치하는 마지막 보고, 양수 `last_sequence`, 최근 `STAT_SENSOR_MAX_AGE_SECONDS`(기본 300초) 이내의
+  `Sensor.last_seen_at`을 확인한다. 센서 없는 칸과 미래 시각의 보고도 유효 관측으로 보지 않는다.
+- 새 순번의 Sensor API 보고는 상태 변경 여부와 무관하게 `last_seen_at`을 갱신한다. 같은 순번의 재시도는 갱신하지 않는다.
+  IoT는 상태가 유지되어도 약 60초마다 새 순번으로 보고해야 한다. `active`와 `Stall.updated_at`을 heartbeat로 사용하지 않는다.
+- 시뮬레이션 API의 메모리 표시 상태는 수집에 반영하지 않는다. 시설 seed나 migration도 통계를 만들지 않는다.
+  과거 수신 시각을 추정하지 않으므로 `last_seen_at`은 최초 실제 보고 전까지 null이다.
 - `captured_at AT TIME ZONE 'Asia/Seoul'`로 현지 요일·시간대를 정한다. 예를 들어 UTC 일요일 15:30은
   서울 월요일 00:30이다. `ISODOW` 기준은 월요일 1, 일요일 7이며 시간 구간은 `[시작, 종료)`로 다룬다.
   조회할 과거 기간을 제한하고 미래 관측은 제외한다.
 - 같은 화장실·요일·시간대의 **동일한 간격으로 수집된 유효 표본** 중 `available_stalls > 0`인 표본의 비율이
   `historical_availability_rate`, `available_bidet_stalls > 0`인 표본의 비율이 `historical_bidet_availability_rate`의 근거가 된다.
+  비데 비율은 `bidet_sample_valid=true`인 표본만 분자·분모에 포함한다. 비데 미확인 칸이 있어도 일반 표본은 쌓는다.
   비데가 없는 화장실의 유효한 0과 관측 자체가 없는 상태를 구분한다. 수집 간격이 달라지면 단순 표본 수 비율을 쓰지 않고
   기간별 수집 방식 분리 또는 시간 가중 처리 여부를 먼저 정한다.
 - 누락 구간을 0으로 채우거나 마지막 상태로 무제한 연장하지 않는다. `is_test_data=true`는 실사용 통계에서 제외한다.
   유효 표본이 없거나 정할 최소 표본 수·관측 범위를 충족하지 못하면 비율은 `null`로 처리한다.
-- 스냅샷 테이블 자체가 센서 신뢰성을 보장하지는 않는다. 현재 `Sensor.active`는 관리자 설정이고
-  `Stall.updated_at`은 변경 시각이어서 heartbeat가 아니다. 정기 수집을 켜기 전에 센서 연결·데이터 신선도와
-  관측 가능 구간의 판단 기준이 필요하다. DB에 오래 남은 상태를 확인 없이 실제 관측으로 취급하지 않는다.
+- `ENABLE_STATISTICS_COLLECTION=false`로 수집만 끌 수 있다. 기존 이력 조회와 추천은 유지된다.
+- `statistics_tracking`은 migration `0007`에서 중지 상태로 초기화한다. 서버의 `python -m app.statistics_tracking start|stop|status`
+  명령으로 제어하고 재시작 후에도 같은 상태를 유지한다. 시작 이후 새로 받은 센서 보고만 새 표본에 사용한다.
+  첫 저장 시각은 시작 이후의 다음 분 경계이며 이전 기간을 소급 저장하지 않는다.
+  수집은 설정 행의 공유 잠금, 제어는 배타 잠금을 사용해 중지 성공 뒤 추가 저장이 발생하지 않게 한다.
 
 현재 통계 service는 서울 기준 1시간 구간, 최근 56일(`STAT_LOOKBACK_DAYS`), 최소 30개 관측(`MIN_STAT_SAMPLE_COUNT`)을 기본값으로 사용한다.
 요청한 화장실들의 같은 요일·시간대 실사용 관측을 동일한 기준 시각의 단일 SQL로 집계한다. 기간은 `[기준 시각 - 조회 기간, 기준 시각)`이고
-현재 순간·미래·테스트 관측은 제외한다. 표본 부족이면 두 비율은 `None`이며 실제 표본 수를 함께 반환한다.
+현재 순간·미래·테스트 관측은 제외한다. 일반·비데 표본 수를 독립적으로 판단해 부족한 비율은 `None`으로 반환한다.
 세부 호출법은 [Backend 통계 service](../backend/README.md#통계-service)에 있다.
-수집 간격과 품질 정책은 후속 수집 단계에서 정한다. 현재 service의 사용 가능 판정은 최소 표본 수 기준이다.
-migration·seed·Sensor API·앱 시작은 스냅샷을 자동 생성하지 않는다. 기존 개발 이벤트로 과거 스냅샷을 역산하지 않는다.
+기존 개발 이벤트로 과거 스냅샷을 역산하지 않는다. 누락 기간도 마지막 상태로 채우지 않는다.
+`python -m app.statistics_report --days 56`은 화장실·서울 요일·시간별 표본 수, 평균 빈칸/사용 칸, 빈칸 존재 비율을 JSON으로 출력한다.
 추천은 실시간 후보를 먼저 고른 뒤 가장 가까운 후보와 거리 차이가 `RECOMMENDATION_DISTANCE_TOLERANCE` 이내인 후보만 통계로 비교한다(기본 10m).
 관련 통계가 가까운 후보 모두에 충분할 때만 `statistics_used=true`다. 부족하면 최단 거리로 fallback한다.
 전체 만석에서는 통계로 후보를 비교하지 않는다. 응답 비율은 항상 최종 선택된 화장실의 값이며 부족하면 `null`이다.
@@ -120,17 +132,21 @@ backend/.venv/bin/alembic -c backend/alembic.ini current
 backend/.venv/bin/alembic -c backend/alembic.ini check
 ```
 
-Docker 실행에서는 변경된 모델과 migration이 이미지에 포함되도록 Backend를 먼저 빌드한다.
-별도 migrate 작업이 관리자 계정으로 migration·런타임 권한을 설정한다. 아래 upgrade 명령으로 명시적인 재적용도 가능하다.
+Docker 실행에서는 먼저 관리자 작업으로 migration·런타임 권한을 갱신하고 Backend를 새 이미지로 실행한다.
 
 ```bash
-docker compose up -d --build --wait backend
-docker compose run --rm migrate alembic upgrade head
+docker compose up -d --wait db
+docker compose run --rm --build migrate
+docker compose up -d --build --no-deps --wait backend
 ```
 
 initial migration은 참조 순서대로 네 테이블을 생성하고 `downgrade`는 역순으로 제거한다.
 `0002`는 `restroom_snapshots`만 추가하고 기존 네 테이블·데이터를 변경하거나 과거 데이터를 채우지 않는다.
 `0002 → 0001` downgrade는 스냅샷 이력을 삭제하므로 테스트에서는 임시 스키마에서만 수행한다.
+`0006`은 센서 수신 시각을 null로 추가하고 기존 비데 표본은 유효한 것으로 유지한다. 과거 표본을 새로 만들지 않는다.
+`0007`은 추적 상태 한 행을 중지 상태로 생성하며 기존 통계는 보존한다.
+Alembic만 개별 실행했다면 `python -m app.provision_runtime_role`도 관리자 환경에서 실행하여
+센서 수신 시각 UPDATE, 스냅샷 INSERT, 스냅샷 ID sequence USAGE, 추적 상태 UPDATE 권한을 갱신한다.
 `downgrade base`는 업무 테이블과 데이터를 삭제하므로 개발 DB에 직접 실행하는 대신,
 [`backend/tests/test_database.py`](../backend/tests/test_database.py)의 임시 스키마 테스트로 왕복 적용을 검증한다.
 

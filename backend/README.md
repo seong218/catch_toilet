@@ -36,6 +36,8 @@ cp backend/.env.example backend/.env
 | `DB_STATEMENT_TIMEOUT_MS` | SQL 실행 제한(밀리초), 기본 `5000` |
 | `MIN_STAT_SAMPLE_COUNT` | 통계를 사용할 최소 관측 표본 수, 기본 `30`, 1 이상 |
 | `STAT_LOOKBACK_DAYS` | 통계의 과거 조회 기간(일), 기본 `56`, 1~3650 |
+| `ENABLE_STATISTICS_COLLECTION` | 수집 작업 실행 허용, 기본 `true`. 실제 추적은 별도 `start` 명령 전까지 중지 |
+| `STAT_SENSOR_MAX_AGE_SECONDS` | 통계에 사용할 센서 보고의 최대 경과 시간, 기본 `300`초, 60~3600 |
 | `RECOMMENDATION_DISTANCE_TOLERANCE` | 가장 가까운 사용 가능 후보와의 거리 차이 허용값(m), 기본 `10`, 0 이상의 유한한 수. 0이면 같은 거리끼리만 비교 |
 | `API_PORT` | Compose에서 공개할 API 포트, 기본 `8000` |
 | `API_BIND_HOST` | Compose 호스트 공개 주소, 기본 `127.0.0.1`. 실제 기기 연결 시 LAN IP를 명시 |
@@ -175,6 +177,9 @@ alembic upgrade head
 - `app/services/recommendation.py`: 현재 빈칸·비데 조건으로 후보를 정하고 가까운 후보 사이에서만 통계로 보정.
 - `app/repositories/statistics.py`: 같은 화장실·서울 요일·1시간 구간의 과거 관측 집계 SQL.
 - `app/services/statistics.py`: 두 빈칸 존재 비율·표본 수 계산과 최소 표본 수 판정, 추천 후보들의 일괄 조회.
+- `app/services/statistics_collection.py`: 최근 센서 보고를 확인하고 매 분 원본 DB 상태를 중복 없이 저장.
+- `app/statistics_report.py`: 화장실·요일·시간별 이용 통계 JSON 조회 명령.
+- `app/statistics_tracking.py`, `app/services/statistics_tracking.py`: 추적 시작·중지·상태 조회 명령과 영속 상태 제어.
 - `app/api/sensors.py`, `app/schemas/sensor.py`: Sensor Update 라우터, strict 요청 검증, 응답 모델과 오류 처리.
 - `app/repositories/sensors.py`: 센서·칸 행 잠금 조회, 화장실 존재 확인.
 - `app/services/sensors.py`: 상태 비교, 동일 상태 생략, 상태·이벤트 원자적 저장과 commit.
@@ -184,6 +189,7 @@ alembic upgrade head
 - `tests/test_database.py`: 임시 PostgreSQL 스키마에서 수행하는 모델·migration·seed 통합 테스트.
 - `tests/test_restroom_snapshots.py`: 관측 시각·집계·출처·중복 제약, 과거 상태 보존, 서울 요일·시간 조회 검사.
 - `tests/test_statistics.py`: 비율·표본 기준·시간대·조회 기간·설정·오류와 여러 화장실의 통계 일괄 조회 검증.
+- `tests/test_statistics_collection.py`: 주기 수집·중복 방지·관측 품질·비데 정보 누락·장소별 집계·오류 처리 검증.
 - `tests/test_recommendation_statistics.py`: 통계 충분·부족·부분 누락, 거리 범위, 실시간 우선, 비데별 기준, 만석 fallback 검증.
 - `tests/test_restrooms_api.py`: 임시 PostgreSQL 스키마를 사용하는 조회 API 계약 테스트.
 - `tests/test_recommendation_api.py`, `tests/test_location.py`: 추천 분기·입력·응답 계약과 거리 계산 테스트.
@@ -198,7 +204,7 @@ alembic upgrade head
 
 FastAPI 앱 자체는 `create_all`이나 migration을 실행하지 않는다.
 Docker의 별도 migrate 작업에서 Alembic을 먼저 실행하며, 로컬 Python 실행에서는 아래 명령을 직접 실행한다.
-`alembic upgrade head`는 `restrooms`, `stalls`, `sensors`, `sensor_events`, `restroom_snapshots`와 Alembic 관리 테이블을 생성한다.
+`alembic upgrade head`는 `restrooms`, `stalls`, `sensors`, `sensor_events`, `restroom_snapshots`, `statistics_tracking`과 Alembic 관리 테이블을 생성한다.
 추후 모델을 추가할 때 공통 `Base`를 사용하고 `app/models/__init__.py`에 모델을 import한 뒤
 `alembic revision --autogenerate -m "설명"`으로 생성된 변경을 검토한다.
 
@@ -299,6 +305,56 @@ Flutter는 비율의 존재만으로 통계 추천이라고 표시하지 않고 
 
 ## 통계 service
 
+**기본 상태는 추적 중지다.** 서버를 켜도 `start` 명령을 실행하기 전에는 새 통계 표본을 저장하지 않는다.
+추적을 시작하면 매 분마다 화장실별 현재 상태를 `RestroomSnapshot`에 저장한다.
+`app/services/statistics_collection.py`가 DB 관측과 저장을 한 SQL 문장으로 처리하고,
+`captured_at`을 해당 분의 시작으로 정규화하여 재시작·동시 수집에서도 화장실당 분당 한 표본만 저장한다.
+서버 중단이나 관측 누락 구간을 과거 데이터로 채우지 않는다. DB 오류는 기록하고 다음 분에 재시도한다.
+
+서버가 실행 중인 상태에서 다음 명령으로 제어한다. HTTP API나 Flutter 변경은 필요 없다.
+
+```bash
+docker compose exec backend python -m app.statistics_tracking start
+docker compose exec backend python -m app.statistics_tracking stop
+docker compose exec backend python -m app.statistics_tracking status
+```
+
+각 줄은 각각 시작·중지·상태 조회다. 로컬 실행은 `backend/`에서
+`.venv/bin/python -m app.statistics_tracking start|stop|status` 중 원하는 동작 하나를 선택한다.
+응답 JSON의 `tracking`은 저장된 추적 상태, `collector_enabled`는 해당 실행 환경의 수집 작업 허용 여부다.
+`started_at`/`stopped_at`은 timezone을 포함한 마지막 시작·중지 시각이며 최초에는 null이다.
+
+- 상태는 `statistics_tracking`의 한 행에 저장하므로 서버 재시작 후에도 유지된다. 중지 상태에서 자동으로 켜지지 않는다.
+- `start` 반복 실행은 최초 시작 시각을 유지한다. 중지 후 다시 시작하면 시작 시각을 새로 잡고 이전 통계는 보존한다.
+- 시작 이후 새로 받은 센서 보고부터 인정한다. 첫 표본은 시작 이후의 다음 분 경계부터 저장할 수 있다.
+  예를 들어 12:34:45에 시작하면 12:35:00부터 수집하며, 시작 전 보고만 남은 화장실은 새 보고가 올 때까지 제외한다.
+- `stop`은 진행 중인 수집 트랜잭션의 완료를 기다린다. 중지 성공 응답 이후에는 새 표본을 저장하지 않는다.
+  기존 통계 조회·추천과 실시간 SensorEvent 저장은 계속 동작한다.
+- `ENABLE_STATISTICS_COLLECTION=false`인 환경에서 `start`는 오류를 반환한다. 서버 환경을 true로 바꾸고 재실행해야 한다.
+
+수집 대상은 활성 화장실 중 **모든 칸의 상태가 확인되고 최근 센서 보고가 있는 곳**이다.
+각 칸에는 활성 센서의 양수 `sequence`, 칸 상태와 일치하는 마지막 보고, 최근 300초 이내의 `last_seen_at`이 필요하다.
+미관측·오래된 보고·센서 없는 칸이 하나라도 있으면 해당 화장실의 표본을 건너뛴다.
+시설 seed 값이나 시뮬레이션 화면의 임시 상태로 통계를 만들지 않으며, 원본 DB 상태만 읽는다.
+`has_bidet` 미확인 칸이 있으면 일반 빈칸 표본은 저장하되 `bidet_sample_valid=false`로 비데 통계에서는 제외한다.
+
+**IoT 연동:** 상태 변경 전송에 더해, 같은 상태라도 약 60초마다 새 `sequence`로 기존 Sensor API에 전송해야 한다.
+새 순번의 동일 상태 요청은 순번과 `last_seen_at`을 갱신하고, 칸의 `updated_at`·이벤트·WebSocket 방송은 유지한다.
+같은 순번의 재전송은 새 관측으로 취급하지 않는다. 요청·응답 스키마는 바뀌지 않는다.
+`last_seen_at`은 migration에서 과거 시각으로 채우지 않으므로 실제 보고 전에는 수집되지 않는다.
+펌웨어의 정기 보고 변경은 IoT 담당자가 적용해야 한다.
+
+기존 DB에 적용할 때는 저장소 루트에서 migration `0007`까지와 런타임 권한을 먼저 갱신한다.
+`migrate` 기본 명령은 Alembic 적용과 `app.provision_runtime_role` 실행을 모두 포함한다.
+
+```bash
+docker compose up -d --wait db
+docker compose run --rm --build migrate
+docker compose up -d --build --no-deps --wait backend
+```
+
+이 적용 과정은 추적을 시작하지 않는다. 실제 누적을 시작할 때 위 `start` 명령을 실행한다.
+
 `app.services.statistics.get_restroom_statistics(db, restroom_id)`는 `RestroomStatistics`를 반환한다.
 `get_restrooms_statistics(db, restroom_ids)`는 같은 기준 시각으로 일괄 조회한 `{restroom_id: RestroomStatistics}`를 반환한다.
 추천은 이 일괄 조회를 사용한다. 별도 통계 HTTP endpoint는 추가하지 않았다.
@@ -308,6 +364,7 @@ Flutter는 비율의 존재만으로 통계 추천이라고 표시하지 않고 
 | `historical_availability_rate` | 유효 표본 중 `available_stalls > 0`인 비율 |
 | `historical_bidet_availability_rate` | 유효 표본 중 `available_bidet_stalls > 0`인 비율 |
 | `sample_count` | 해당 화장실·요일·시간·조회 기간·출처 조건을 만족한 스냅샷 수 |
+| `bidet_sample_count` | 그중 비데 설치 정보까지 확인된 표본 수 |
 | `is_usable` (property) | 최소 표본 수를 충족하여 두 비율을 사용할 수 있는지 여부 |
 
 - 서버 현재 시각을 `Asia/Seoul`로 변환하여 **같은 요일·같은 1시간 구간**을 고른다.
@@ -315,17 +372,30 @@ Flutter는 비율의 존재만으로 통계 추천이라고 표시하지 않고 
 - 기간은 `[현재 시각 - STAT_LOOKBACK_DAYS, 현재 시각)`이다. 시작은 포함하고 현재 순간·미래는 제외한다.
   현재 시간대에서 이미 지나간 시각의 관측도 조건에 맞으면 포함된다. 다른 timezone으로 표현한 같은 현재 시각은 같은 결과다.
 - `is_test_data=true`, 다른 화장실·요일·시간대, 조회 기간 밖의 스냅샷은 표본 수에도 포함하지 않는다.
-- `sample_count < MIN_STAT_SAMPLE_COUNT`이면 실제 표본 수는 유지하고 두 비율은 `None`, `is_usable=False`다.
+- 각 비율의 표본 수가 `MIN_STAT_SAMPLE_COUNT` 미만이면 해당 비율은 `None`이다. 일반·비데 표본 수를 독립적으로 판단한다.
+  두 비율 중 하나라도 부족하면 `is_usable=False`지만, 일반 추천은 충분한 일반 통계를 사용할 수 있다.
   경계값과 같으면 사용 가능하다. 충분히 관측된 `0.0`과 `1.0`은 유효하며, 없는 관측을 0으로 채우지 않는다.
 - 빈칸 **존재 여부**를 센다. 빈칸 개수의 평균·전체 칸 대비 사용률·SensorEvent의 잠금 해제 비율은 사용하지 않는다.
-  두 분자와 공통 분모를 하나의 SELECT에서 얻고 DB에 결과를 저장하거나 캐시하지 않는다.
+  두 분자와 각각의 분모를 하나의 SELECT에서 얻고 DB에 결과를 저장하거나 캐시하지 않는다.
   일괄 조회는 ID를 중복 제거하고 요청한 모든 ID의 결과를 반환한다. 관측이 없는 ID는 표본 0이며, 빈 ID 목록은 SQL 없이 빈 dict를 반환한다.
 - `now=`는 내부 테스트·재현용 timezone-aware datetime이며 클라이언트 입력이 아니다. 생략하면 서버 시각을 사용한다.
   잘못된 ID·timezone 없는 시각은 `ValueError`, DB 실패는 원래 SQLAlchemy 예외를 전달한다.
   없는 화장실이나 관측이 없는 화장실은 표본 0·비율 `None`이며, DB 오류를 데이터 부족으로 숨기지 않는다.
 
-입력은 같은 주기로 수집된 유효한 관측이라는 전제다. `is_usable`은 최소 표본 수 판정이며 센서 신선도 보증은 아니다.
-정기 수집·센서 관측 품질 판단은 후속 단계다. 실제 데이터 생성 전에 `database/README.md`의 수집 기준을 적용해야 한다.
+수집기가 센서 신선도를 검사하고, 통계 service는 저장된 유효 관측의 최소 표본 수를 판단한다.
+기존 추천 service가 이 통계를 사용하므로 누적 후 별도의 추천 전환 작업은 필요 없다.
+
+장소·요일·시간별 이용 현황은 읽기 전용 명령으로 확인한다.
+
+```bash
+docker compose exec backend python -m app.statistics_report --days 56
+# 특정 화장실만 조회하려면 --restroom-id <ID> 추가
+```
+
+로컬에서는 `backend/`에서 `.venv/bin/python -m app.statistics_report --days 56`을 실행한다.
+출력은 `Asia/Seoul` 기준 화장실 ID·건물·층·성별·요일(월=1, 일=7)·시각(0~23)별 JSON이다.
+일반/비데 표본 수, 평균 빈칸 수, 평균 사용 중인 칸 수, 두 빈칸 존재 비율을 포함한다.
+표본 부족 비율은 `null`, 관측이 전혀 없으면 `buckets: []`다. 통계 화면과 공개 통계 API는 추가하지 않았다.
 
 로컬 조회 예시(개발 DB에 스냅샷이 없으면 0 / None / False):
 
@@ -411,7 +481,7 @@ curl -i -X POST http://localhost:8000/api/sensors/stall \
 3. 연결된 칸 행을 `FOR UPDATE`로 잠그고 화장실 존재·소속 일치를 확인한다.
    서로 다른 센서가 같은 칸을 갱신하더라도 칸 잠금을 기준으로 순차 처리한다.
 4. 상태가 같으면 Stall UPDATE와 SensorEvent INSERT를 모두 생략하며 `updated_at`도 유지한다.
-   새 번호는 `Sensor.last_sequence/last_occupied`에 원자적으로 저장한다. 상태 변경 간격 제한은 `429`다.
+   새 번호는 `Sensor.last_sequence/last_occupied/last_seen_at`에 원자적으로 저장한다. 상태 변경 간격 제한은 `429`다.
 5. 상태가 바뀌면 `occupied`와 `updated_at`을 갱신하고 `occupancy_changed` 이벤트를 같은 트랜잭션에 저장한다.
    이벤트 `value`는 변경 후 상태다. 잠금 획득 뒤 DB의 `clock_timestamp()`를 읽어 Stall과 이벤트에 같은 처리 시각을 기록한다.
 6. 같은 트랜잭션에서 변경 후 집계값을 읽어 이벤트를 준비한다. commit 성공 뒤에만 WebSocket 큐에 넣고 성공 응답을 반환한다.
@@ -438,7 +508,9 @@ DB 작업은 thread pool에서 실행하여 WebSocket 전송과 다른 비동기
 
 초기 상태가 false인 개발용 seed 기기에 아래 요청을 순서대로 보내면
 `changed`는 `false → true → false → true`이며 이벤트는 총 2건 추가된다.
-이 명령은 **개발용 HTTP 시뮬레이션**이고 실제 센서 관측 통계로 취급하지 않는다.
+개발 중 임의 상태 표시는 [PC 상태 시뮬레이션](#pc-상태-시뮬레이션)을 사용한다.
+인증된 Sensor API는 실제 관측 입력이므로 수집 대상이 될 수 있다. 아래처럼 Sensor API 자체를 시험하는 환경은
+운영 DB와 분리하거나 `ENABLE_STATISTICS_COLLECTION=false`로 실행한다.
 
 ```bash
 sequence=${SENSOR_SEQUENCE:?Set the next device sequence}
@@ -782,3 +854,38 @@ Flutter 담당자 전달 정보는 [FLUTTER_HANDOFF.md](FLUTTER_HANDOFF.md)에 �
 - 실제 하드웨어·Flutter 실행과 통계 스냅샷 자동 수집은 기존 후속 범위다. 최종 연동 안내의 알려진 제약을 참고한다.
 - 최종 이미지에서 모든 응답 모델의 필수 필드 표시와 health·docs·목록·상세·비데 추천 200을 재확인했다.
   기존 업무 테이블 모든 행과 `.env`·공통 계약·루트 파일은 점검 전후 동일하며 임시 스키마·컨테이너·볼륨은 남기지 않았다.
+
+## 통계 자동 수집 구현 및 인계 (2026-10-25)
+
+- 구현: 1분 간격의 실제 상태 저장, 센서 수신 시각에 따른 관측 품질 판단, 비데 표본의 독립 판정,
+  장소·서울 요일·시간별 통계 조회. 기존 추천 service에서 누적 통계를 그대로 사용한다.
+- 신규: `alembic/versions/0006_statistics_collection.py`, `app/services/statistics_collection.py`,
+  `app/statistics_report.py`, `tests/test_statistics_collection.py`.
+- 수정: Sensor/RestroomSnapshot 모델, 센서·통계 service/repository, 서버 lifespan·설정·런타임 DB 권한,
+  migration 로그 설정, 관련 테스트, `.env.example`, Backend/Database 문서와 Compose 환경변수.
+- 검증: 임시 PostgreSQL 스키마에서 전체 **162개 테스트 통과**, 회귀 suite **2회** 실행.
+  첫 실행에서 Alembic이 애플리케이션 logger를 비활성화하는 문제를 수정했다.
+  migration 왕복·metadata 일치, API 계약, 센서 동일 상태 보고, 중복/동시 수집, rollback,
+  오래된/미관측 상태 제외, 시뮬레이션 제외, 장소·요일별 집계, 기존 추천·WebSocket 흐름을 검증했다.
+  CLI 도움말과 `git diff --check`도 통과했다.
+- 실행: 위 [통계 service](#통계-service)의 migration·권한 갱신·Backend 재실행 명령을 적용한다.
+  이번 작업에서는 실행 중인 공유 서버의 DB migration이나 컨테이너 재배포는 수행하지 않았다.
+- IoT 인계: 같은 상태라도 약 60초마다 새 순번으로 보고해야 한다. 5분간 보고가 없으면 해당 칸이 속한
+  화장실은 새 표본에서 제외된다. 주기 전송 펌웨어와 통계 UI/공개 API는 이번 범위에 포함하지 않았다.
+  HTTP/WebSocket 요청·응답 계약과 추가 의존성 변경은 없다. 남아 있는 테스트 실패는 없다.
+
+## 추적 시작·중지 제어 인계 (2026-10-25)
+
+- 기본 중지로 변경했다. 운영자가 `start`를 실행한 뒤 새 센서 보고가 있는 화장실만 1분 간격으로 수집한다.
+  `stop`은 기존 통계를 보존하며 신규 저장을 막고, `status`는 저장된 상태·시작/중지 시각을 반환한다.
+  상태는 DB에 보관하고 중복 명령은 같은 전환 시각을 유지한다.
+- 추가: `alembic/versions/0007_statistics_tracking.py`, `app/models/statistics_tracking.py`,
+  `app/services/statistics_tracking.py`, `app/statistics_tracking.py`, `tests/test_statistics_tracking.py`.
+- 수정: 모델 등록, 기존 수집기의 시작 시각·잠금 검사, 런타임 권한, DB/수집 테스트, 환경변수 설명과 Backend/Database 문서.
+- 실행: 위 [통계 service](#통계-service)의 migration·권한 갱신·서버 재실행 후
+  `docker compose exec backend python -m app.statistics_tracking start`를 실행한다. 중지·확인은 끝의 동작을 `stop`·`status`로 바꾼다.
+- 검증: 전체 **171개 테스트 통과**, 이번 변경의 회귀 suite **1회** 실행.
+  기본 중지, 상태 유지, 시작 이전 보고 배제, 반복/동시 시작, rollback, 수집 중 중지 잠금,
+  중지·재시작 후 수집, CLI 정상/DB 오류 응답과 기존 기능을 검증했다.
+- 실행 중인 공유 서버에는 migration·배포·추적 시작을 수행하지 않았다. 추적 시작 요청이 오면 대상 서버에 적용한 뒤 `start`로 시작한다.
+  IoT 정기 보고 조건은 그대로이며 HTTP/WebSocket 계약·Flutter 화면·의존성 추가는 없다. 남은 테스트 실패는 없다.

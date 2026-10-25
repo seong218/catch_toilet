@@ -67,7 +67,7 @@ class DatabaseTests(unittest.TestCase):
         command.downgrade(self.config, "base")
         self.assertEqual(inspect(self.connection).get_table_names(), ["alembic_version"])
         command.upgrade(self.config, "head")
-        self.assertEqual(self.connection.scalar(text("SELECT version_num FROM alembic_version")), "0005")
+        self.assertEqual(self.connection.scalar(text("SELECT version_num FROM alembic_version")), "0007")
         self.assertEqual(
             compare_metadata(MigrationContext.configure(self.connection), Base.metadata), []
         )
@@ -76,11 +76,12 @@ class DatabaseTests(unittest.TestCase):
         expected = {
             "restrooms": {"id", "name", "building", "floor", "x", "y", "created_at", "latitude", "longitude", "gender", "location_source", "bidet_stalls", "accessible_stalls", "data_key", "is_active"},
             "stalls": {"id", "restroom_id", "stall_number", "occupied", "has_bidet", "updated_at", "is_accessible"},
-            "sensors": {"id", "device_id", "restroom_id", "stall_id", "sensor_type", "active", "last_sequence", "last_occupied"},
+            "sensors": {"id", "device_id", "restroom_id", "stall_id", "sensor_type", "active", "last_sequence", "last_occupied", "last_seen_at"},
             "sensor_events": {"id", "sensor_id", "event_type", "value", "created_at"},
+            "statistics_tracking": {"id", "enabled", "started_at", "stopped_at"},
             "restroom_snapshots": {
                 "id", "restroom_id", "total_stalls", "available_stalls",
-                "available_bidet_stalls", "captured_at", "is_test_data",
+                "available_bidet_stalls", "captured_at", "is_test_data", "bidet_sample_valid",
             },
         }
         inspector = inspect(self.connection)
@@ -90,7 +91,8 @@ class DatabaseTests(unittest.TestCase):
                 columns = inspector.get_columns(table)
                 self.assertEqual({column["name"] for column in columns}, names)
                 nullable = {"restrooms": {"latitude", "longitude", "bidet_stalls", "data_key"},
-                            "stalls": {"occupied", "has_bidet"}}.get(table, set())
+                            "stalls": {"occupied", "has_bidet"}, "sensors": {"last_seen_at"},
+                            "statistics_tracking": {"started_at", "stopped_at"}}.get(table, set())
                 self.assertEqual({column["name"] for column in columns if column["nullable"]}, nullable)
 
     def test_accessibility_migration_backfills_only_unknown_values(self):
@@ -266,7 +268,7 @@ class DatabaseTests(unittest.TestCase):
         return {
             model.__tablename__: self.db.execute(
                 select(*(column for column in model.__table__.columns
-                         if column.name not in {"last_sequence", "last_occupied", "latitude", "longitude", "gender", "location_source", "bidet_stalls", "accessible_stalls", "data_key", "is_active", "is_accessible"})).order_by(model.id)
+                         if column.name not in {"last_sequence", "last_occupied", "last_seen_at", "latitude", "longitude", "gender", "location_source", "bidet_stalls", "accessible_stalls", "data_key", "is_active", "is_accessible"})).order_by(model.id)
             ).all()
             for model in (Restroom, Stall, Sensor, SensorEvent)
         }

@@ -68,12 +68,14 @@ class SensorAPIFixture(unittest.TestCase):
         }
         self.sequences = defaultdict(lambda: count(1))
         self.settings = get_settings().model_copy(update={
+            "enable_statistics_collection": False,
             "sensor_rate_burst": 1000, "sensor_rate_per_second": 1000,
             "sensor_global_burst": 1000, "sensor_global_rate_per_second": 1000,
             "sensor_min_state_interval_seconds": 0,
             "sensor_api_keys": {device: SecretStr(key) for device, key in self.sensor_keys.items()},
         })
         app.dependency_overrides[get_settings] = lambda: self.settings
+        self.enterContext(patch("app.main.get_settings", return_value=self.settings))
         # One lifespan/portal models one server event loop for HTTP + WebSocket.
         self.client = self.enterContext(TestClient(app))
         self.client.headers.update(self.auth_headers("test-sensor"))
@@ -113,6 +115,26 @@ class SensorAPIFixture(unittest.TestCase):
 
 
 class SensorAPITests(SensorAPIFixture):
+    def test_unchanged_heartbeat_refreshes_liveness_without_events_or_broadcast(self):
+        before = self.snapshot()
+        with patch.object(app.state.connection_manager, "broadcast") as broadcast:
+            self.assertFalse(self.post(False)["changed"])
+            with self.sessions() as db:
+                first = db.get(Sensor, self.sensor_id).last_seen_at
+            self.assertIsNotNone(first)
+            # Exact retransmission is not a new observation.
+            replay = self.client.post("/api/sensors/stall", json={
+                "device_id": "test-sensor", "occupied": False, "sequence": 1,
+            })
+            self.assertEqual(replay.status_code, 200)
+            with self.sessions() as db:
+                self.assertEqual(db.get(Sensor, self.sensor_id).last_seen_at, first)
+            self.assertFalse(self.post(False)["changed"])
+            with self.sessions() as db:
+                self.assertGreater(db.get(Sensor, self.sensor_id).last_seen_at, first)
+            self.assertEqual(self.snapshot(), before)
+            broadcast.assert_not_called()
+
     def test_authentication_failure_preserves_state_events_and_broadcast(self):
         before = self.snapshot()
         with patch.object(app.state.connection_manager, "broadcast") as broadcast:

@@ -55,11 +55,14 @@ def update_stall_occupancy(
         ):
             raise InvalidSensorMappingError
 
+        # Every new accepted sequence is a fresh observation, including a
+        # periodic unchanged-state report. Exact retries do not extend liveness.
+        observed_at = db.scalar(select(func.clock_timestamp()))
         changed = stall.occupied != occupied
         if changed:
             # Use processing time AFTER lock acquisition, not transaction start
             # time, so a queued request cannot backdate the previous update.
-            changed_at = db.scalar(select(func.clock_timestamp()))
+            changed_at = observed_at
             remaining = minimum_interval - (changed_at - stall.updated_at).total_seconds()
             if stall.occupied is not None and remaining > 0:
                 raise SensorRateLimitError(remaining)
@@ -87,5 +90,6 @@ def update_stall_occupancy(
             )
         sensor.last_sequence = sequence
         sensor.last_occupied = occupied
-        # A repeated state performs no UPDATE/INSERT and keeps updated_at intact.
+        sensor.last_seen_at = observed_at
+        # An unchanged state keeps the stall timestamp and event history intact.
     return notification

@@ -5,5 +5,6 @@ from app.models.restroom_snapshot import RestroomSnapshot
 from app.models.sensor import Sensor
 from app.models.sensor_event import SensorEvent
 from app.models.stall import Stall
+from app.models.statistics_tracking import StatisticsTracking
 
-__all__ = ["Restroom", "Stall", "Sensor", "SensorEvent", "RestroomSnapshot"]
+__all__ = ["Restroom", "Stall", "Sensor", "SensorEvent", "RestroomSnapshot", "StatisticsTracking"]
