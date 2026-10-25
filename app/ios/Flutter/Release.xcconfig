@@ -1,1 +1,6 @@
 #include "Generated.xcconfig"
+CT_HTTP_SERVER_HOST = localhost
+#include? "Local.xcconfig"
+// Info.plist keys need preprocessing; ordinary build expansion only handles values.
+INFOPLIST_PREPROCESS = YES
+INFOPLIST_PREPROCESSOR_DEFINITIONS = $(inherited) CT_HTTP_SERVER_HOST=$(CT_HTTP_SERVER_HOST)

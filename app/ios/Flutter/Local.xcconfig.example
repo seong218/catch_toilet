@@ -1,0 +1,7 @@
+// Copy to Local.xcconfig (ignored by Git) and fill in local values.
+// Do not save personal signing details in Runner.xcodeproj/project.pbxproj.
+DEVELOPMENT_TEAM =
+
+// For HTTP device testing, use only the API host (no scheme, port, or path).
+// IP-specific ATS exceptions require iOS 17 or later.
+CT_HTTP_SERVER_HOST = localhost
